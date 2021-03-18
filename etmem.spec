@@ -2,10 +2,12 @@
 
 Name:	       etmem
 Version:       1.0
-Release:       1
+Release:       2
 Summary:       etmem 
 License:       Mulan PSL v2
 Source0:       etmem-%{version}.tar.gz
+
+Patch0: 0001-fix-64K-pagesize-scan-problem.patch
 
 #Dependency
 BuildRequires: cmake
@@ -44,5 +46,8 @@ install -m 0600 conf/example_conf.yaml $RPM_BUILD_ROOT%{_sysconfdir}/etmem/
 %postun -p /sbin/ldconfig
 
 %changelog
+* Thu Mar 18 2021 liubo <liubo254@huawei.com> 1.0-2
+- Fix 64K pagesize scan problem
+
 * Thu Mar 18 2021 louhongxiang <louhongxiang@huawei.com>
 - Package init
