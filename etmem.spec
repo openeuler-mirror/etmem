@@ -2,13 +2,13 @@
 
 Name:	       etmem
 Version:       1.0
-Release:       2
+Release:       3
 Summary:       etmem 
 License:       Mulan PSL v2
 Source0:       etmem-%{version}.tar.gz
 
 Patch0: 0001-fix-64K-pagesize-scan-problem.patch
-
+Patch1: 0002-change-aarch64-march-to-armv8-a.patch
 #Dependency
 BuildRequires: cmake
 BuildRequires: libboundscheck
@@ -46,6 +46,9 @@ install -m 0600 conf/example_conf.yaml $RPM_BUILD_ROOT%{_sysconfdir}/etmem/
 %postun -p /sbin/ldconfig
 
 %changelog
+* Sat Mar 30 2021 liubo <liubo254@huawei.com> 1.0-3
+- Change aarch64 march to armv8-a
+
 * Thu Mar 18 2021 liubo <liubo254@huawei.com> 1.0-2
 - Fix 64K pagesize scan problem
 
