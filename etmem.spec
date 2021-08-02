@@ -2,7 +2,7 @@
 
 Name:	       etmem
 Version:       1.0
-Release:       5
+Release:       6
 Summary:       etmem 
 License:       Mulan PSL v2
 Source0:       etmem-%{version}.tar.gz
@@ -31,8 +31,8 @@ make
 mkdir -p $RPM_BUILD_ROOT%{_bindir}
 install -d $RPM_BUILD_ROOT%{_sysconfdir}/etmem/
 
-install -m 0700 build/bin/etmem $RPM_BUILD_ROOT%{_bindir}
-install -m 0700 build/bin/etmemd $RPM_BUILD_ROOT%{_bindir}
+install -m 0500 build/bin/etmem $RPM_BUILD_ROOT%{_bindir}
+install -m 0500 build/bin/etmemd $RPM_BUILD_ROOT%{_bindir}
 install -m 0600 conf/example_conf.yaml $RPM_BUILD_ROOT%{_sysconfdir}/etmem/
 
 %files
@@ -46,6 +46,9 @@ install -m 0600 conf/example_conf.yaml $RPM_BUILD_ROOT%{_sysconfdir}/etmem/
 %postun -p /sbin/ldconfig
 
 %changelog
+* Mon Aug 1 2021 louhongxiang <louhongxiang@huawei.com> 1.0-6
+- cancel write permission of root.
+
 * Mon May 24 2021 liubo <liubo254@huawei.com> 1.0-5
 - add missing BuildRequires in etmem spec
 
