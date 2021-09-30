@@ -1,0 +1,321 @@
+From 2191a3f804026b73a82d146dfe834be0e515fc0e Mon Sep 17 00:00:00 2001
+From: Kemeng Shi <shikemeng@huawei.com>
+Date: Thu, 6 May 2021 14:20:29 +0800
+Subject: [PATCH 22/50] export symbols for user defined thirdparty engine
+
+Signed-off-by: Kemeng Shi <shikemeng@huawei.com>
+---
+ inc/etmemd_inc/etmem_thirdparty.h   | 23 +++++++++++++
+ inc/etmemd_inc/etmemd_engine.h      | 30 +----------------
+ inc/etmemd_inc/etmemd_engine_exp.h  | 52 +++++++++++++++++++++++++++++
+ inc/etmemd_inc/etmemd_project.h     | 13 +-------
+ inc/etmemd_inc/etmemd_project_exp.h | 33 ++++++++++++++++++
+ inc/etmemd_inc/etmemd_task.h        | 19 +----------
+ inc/etmemd_inc/etmemd_task_exp.h    | 43 ++++++++++++++++++++++++
+ 7 files changed, 154 insertions(+), 59 deletions(-)
+ create mode 100644 inc/etmemd_inc/etmem_thirdparty.h
+ create mode 100644 inc/etmemd_inc/etmemd_engine_exp.h
+ create mode 100644 inc/etmemd_inc/etmemd_project_exp.h
+ create mode 100644 inc/etmemd_inc/etmemd_task_exp.h
+
+diff --git a/inc/etmemd_inc/etmem_thirdparty.h b/inc/etmemd_inc/etmem_thirdparty.h
+new file mode 100644
+index 0000000..0e128ce
+--- /dev/null
++++ b/inc/etmemd_inc/etmem_thirdparty.h
+@@ -0,0 +1,23 @@
++/******************************************************************************
++ * Copyright (c) Huawei Technologies Co., Ltd. 2019-2021. All rights reserved.
++ * etmem is licensed under the Mulan PSL v2.
++ * You can use this software according to the terms and conditions of the Mulan PSL v2.
++ * You may obtain a copy of Mulan PSL v2 at:
++ * http://license.coscl.org.cn/MulanPSL2
++ * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR
++ * IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY OR FIT FOR A PARTICULAR
++ * PURPOSE.
++ * See the Mulan PSL v2 for more details.
++ * Author: shikemeng
++ * Create: 2021-4-30
++ * Description: This is a header file of the function declaration for user defined thirdparty engine.
++ ******************************************************************************/
++
++#ifndef ETMEM_THIRDPARTY_H
++#define ETMEM_THIRDPARTY_H
++
++#include "etmemd_project_exp.h"
++#include "etmemd_engine_exp.h"
++#include "etmemd_task_exp.h"
++
++#endif
+diff --git a/inc/etmemd_inc/etmemd_engine.h b/inc/etmemd_inc/etmemd_engine.h
+index 36e1760..b513ae8 100644
+--- a/inc/etmemd_inc/etmemd_engine.h
++++ b/inc/etmemd_inc/etmemd_engine.h
+@@ -16,9 +16,9 @@
+ #ifndef ETMEMD_ENGINE_H
+ #define ETMEMD_ENGINE_H
+ 
+-#include <glib.h>
+ #include "etmemd.h"
+ #include "etmemd_task.h"
++#include "etmemd_engine_exp.h"
+ 
+ enum eng_type {
+     SLIDE_ENGINE = 0,
+@@ -29,34 +29,6 @@ enum eng_type {
+     ENGINE_TYPE_CNT,
+ };
+ 
+-/*
+- * engine struct
+- * */
+-struct engine {
+-    int engine_type;            /* engine type used for elimination strategy */
+-    char *name;
+-    void *params;               /* point to engine parameter struct */
+-    struct project *proj;
+-    struct page_refs *page_ref; /* scan result */
+-    struct engine_ops *ops;
+-    struct task *tasks;
+-    uint64_t page_cnt;          /* number of pages */
+-    struct engine *next;
+-    void *handler;
+-};
+-
+-struct engine_ops {
+-    int (*fill_eng_params)(GKeyFile *config, struct engine *eng);
+-    void (*clear_eng_params)(struct engine *eng);
+-    int (*fill_task_params)(GKeyFile *config, struct task *task);
+-    void (*clear_task_params)(struct task *tk);
+-    int (*start_task)(struct engine *eng, struct task *tk);
+-    void (*stop_task)(struct engine *eng, struct task *tk);
+-    int (*alloc_pid_params)(struct engine *eng, struct task_pid **tk_pid);
+-    void (*free_pid_params)(struct engine *eng, struct task_pid **tk_pid);
+-    int (*eng_mgt_func)(struct engine *eng, struct task *tk, char *cmd, int fd);
+-};
+-
+ struct engine *etmemd_engine_add(GKeyFile *config);
+ void etmemd_engine_remove(struct engine *eng);
+ 
+diff --git a/inc/etmemd_inc/etmemd_engine_exp.h b/inc/etmemd_inc/etmemd_engine_exp.h
+new file mode 100644
+index 0000000..2c119ec
+--- /dev/null
++++ b/inc/etmemd_inc/etmemd_engine_exp.h
+@@ -0,0 +1,52 @@
++/******************************************************************************
++ * Copyright (c) Huawei Technologies Co., Ltd. 2019-2021. All rights reserved.
++ * etmem is licensed under the Mulan PSL v2.
++ * You can use this software according to the terms and conditions of the Mulan PSL v2.
++ * You may obtain a copy of Mulan PSL v2 at:
++ * http://license.coscl.org.cn/MulanPSL2
++ * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR
++ * IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY OR FIT FOR A PARTICULAR
++ * PURPOSE.
++ * See the Mulan PSL v2 for more details.
++ * Author: shikemeng
++ * Create: 2021-04-30
++ * Description: This is a header file of the export engine symbols.
++ ******************************************************************************/
++
++#ifndef ETMEMD_ENGINE_EXP_H
++#define ETMEMD_ENGINE_EXP_H
++
++#include <glib.h>
++#include <stdint.h>
++
++struct task_pid;
++
++/*
++ * engine struct
++ * */
++struct engine {
++    int engine_type;            /* engine type used for elimination strategy */
++    char *name;
++    void *params;               /* point to engine parameter struct */
++    struct project *proj;
++    struct page_refs *page_ref; /* scan result */
++    struct engine_ops *ops;
++    struct task *tasks;
++    uint64_t page_cnt;          /* number of pages */
++    struct engine *next;
++    void *handler;
++};
++
++struct engine_ops {
++    int (*fill_eng_params)(GKeyFile *config, struct engine *eng);
++    void (*clear_eng_params)(struct engine *eng);
++    int (*fill_task_params)(GKeyFile *config, struct task *task);
++    void (*clear_task_params)(struct task *tk);
++    int (*start_task)(struct engine *eng, struct task *tk);
++    void (*stop_task)(struct engine *eng, struct task *tk);
++    int (*alloc_pid_params)(struct engine *eng, struct task_pid **tk_pid);
++    void (*free_pid_params)(struct engine *eng, struct task_pid **tk_pid);
++    int (*eng_mgt_func)(struct engine *eng, struct task *tk, char *cmd, int fd);
++};
++
++#endif
+diff --git a/inc/etmemd_inc/etmemd_project.h b/inc/etmemd_inc/etmemd_project.h
+index e574a84..b44d68b 100644
+--- a/inc/etmemd_inc/etmemd_project.h
++++ b/inc/etmemd_inc/etmemd_project.h
+@@ -16,26 +16,15 @@
+ #ifndef ETMEMD_PROJECT_H
+ #define ETMEMD_PROJECT_H
+ 
+-#include <sys/queue.h>
+ #include "etmemd_task.h"
+ #include "etmemd_engine.h"
++#include "etmemd_project_exp.h"
+ 
+ /* set the length of project name to 32 */
+ #define PROJECT_NAME_MAX_LEN  32
+ #define FILE_NAME_MAX_LEN 256
+ #define PROJECT_SHOW_COLM_MAX 128
+ 
+-struct project {
+-    char *name;
+-    int interval;
+-    int loop;
+-    int sleep;
+-    bool start;
+-    struct engine *engs;
+-
+-    SLIST_ENTRY(project) entry;
+-};
+-
+ enum opt_result {
+     OPT_SUCCESS = 0,
+     OPT_INVAL,
+diff --git a/inc/etmemd_inc/etmemd_project_exp.h b/inc/etmemd_inc/etmemd_project_exp.h
+new file mode 100644
+index 0000000..bcd5108
+--- /dev/null
++++ b/inc/etmemd_inc/etmemd_project_exp.h
+@@ -0,0 +1,33 @@
++/******************************************************************************
++ * Copyright (c) Huawei Technologies Co., Ltd. 2019-2021. All rights reserved.
++ * etmem is licensed under the Mulan PSL v2.
++ * You can use this software according to the terms and conditions of the Mulan PSL v2.
++ * You may obtain a copy of Mulan PSL v2 at:
++ * http://license.coscl.org.cn/MulanPSL2
++ * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR
++ * IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY OR FIT FOR A PARTICULAR
++ * PURPOSE.
++ * See the Mulan PSL v2 for more details.
++ * Author: shikemeng
++ * Create: 2021-4-30
++ * Description: This is a header file of the export project symbols.
++ ******************************************************************************/
++
++#ifndef ETMEMD_PROJECT_EXP_H
++#define ETMEMD_PROJECT_EXP_H
++
++#include <sys/queue.h>
++#include <stdbool.h>
++
++struct project {
++    char *name;
++    int interval;
++    int loop;
++    int sleep;
++    bool start;
++    struct engine *engs;
++
++    SLIST_ENTRY(project) entry;
++};
++
++#endif
+diff --git a/inc/etmemd_inc/etmemd_task.h b/inc/etmemd_inc/etmemd_task.h
+index 3f32be5..be3ade3 100644
+--- a/inc/etmemd_inc/etmemd_task.h
++++ b/inc/etmemd_inc/etmemd_task.h
+@@ -17,12 +17,11 @@
+ #ifndef ETMEMD_TASK_H
+ #define ETMEMD_TASK_H
+ 
+-#include <stdint.h>
+ #include <stdbool.h>
+-#include <pthread.h>
+ #include <glib.h>
+ #include "etmemd_threadpool.h"
+ #include "etmemd_threadtimer.h"
++#include "etmemd_task_exp.h"
+ 
+ /* in some system the max length of pid may be larger than 5, so we use 10 here */
+ #define PID_STR_MAX_LEN 10
+@@ -35,22 +34,6 @@ struct task_pid {
+     struct task_pid *next;
+ };
+ 
+-struct task {
+-    char *type;
+-    char *value;
+-    char *name;
+-    uint64_t max_threads;
+-
+-    struct task_pid *pids;
+-    struct engine *eng;
+-    void *params;
+-    pthread_t task_pt;
+-    timer_thread *timer_inst;
+-    thread_pool *threadpool_inst;
+-
+-    struct task *next;
+-};
+-
+ int etmemd_get_task_pids(struct task *tk, bool recursive);
+ 
+ void etmemd_free_task_pids(struct task *tk);
+diff --git a/inc/etmemd_inc/etmemd_task_exp.h b/inc/etmemd_inc/etmemd_task_exp.h
+new file mode 100644
+index 0000000..b62f382
+--- /dev/null
++++ b/inc/etmemd_inc/etmemd_task_exp.h
+@@ -0,0 +1,43 @@
++/******************************************************************************
++ * Copyright (c) Huawei Technologies Co., Ltd. 2019-2021. All rights reserved.
++ * etmem is licensed under the Mulan PSL v2.
++ * You can use this software according to the terms and conditions of the Mulan PSL v2.
++ * You may obtain a copy of Mulan PSL v2 at:
++ * http://license.coscl.org.cn/MulanPSL2
++ * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR
++ * IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY OR FIT FOR A PARTICULAR
++ * PURPOSE.
++ * See the Mulan PSL v2 for more details.
++ * Author: shikemeng
++ * Create: 2021-4-30
++ * Description: This is a header file of the export task symbols.
++ ******************************************************************************/
++
++#ifndef ETMEMD_TASK_EXP_H
++#define ETMEMD_TASK_EXP_H
++
++#include <stdint.h>
++#include <pthread.h>
++
++struct timer_thread_t;
++typedef struct timer_thread_t timer_thread;
++struct thread_pool_t;
++typedef struct thread_pool_t thread_pool;
++
++struct task {
++    char *type;
++    char *value;
++    char *name;
++    uint64_t max_threads;
++
++    struct task_pid *pids;
++    struct engine *eng;
++    void *params;
++    pthread_t task_pt;
++    timer_thread *timer_inst;
++    thread_pool *threadpool_inst;
++
++    struct task *next;
++};
++
++#endif
+-- 
+2.27.0
+

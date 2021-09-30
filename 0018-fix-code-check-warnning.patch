@@ -1,0 +1,41 @@
+From 6d9c2711f4fee6ec29ffcbf6bda5991e37cd12bb Mon Sep 17 00:00:00 2001
+From: Kemeng Shi <shikemeng@huawei.com>
+Date: Thu, 29 Apr 2021 16:17:55 +0800
+Subject: [PATCH 18/50] fix code check warnning remove redundant space
+
+Signed-off-by: Kemeng Shi <shikemeng@huawei.com>
+---
+ src/etmem_src/etmem_project.c  | 2 +-
+ src/etmemd_src/etmemd_cslide.c | 3 ++-
+ 2 files changed, 3 insertions(+), 2 deletions(-)
+
+diff --git a/src/etmem_src/etmem_project.c b/src/etmem_src/etmem_project.c
+index bb53df3..5892789 100644
+--- a/src/etmem_src/etmem_project.c
++++ b/src/etmem_src/etmem_project.c
+@@ -107,7 +107,7 @@ static int project_check_params(const struct mem_proj *proj)
+         printf("socket name to connect must all be given, please check.\n");
+         return -EINVAL;
+     }
+- 
++
+     if (proj->cmd == ETMEM_CMD_SHOW) {
+         return 0;
+     }
+diff --git a/src/etmemd_src/etmemd_cslide.c b/src/etmemd_src/etmemd_cslide.c
+index f311a44..5914ca1 100644
+--- a/src/etmemd_src/etmemd_cslide.c
++++ b/src/etmemd_src/etmemd_cslide.c
+@@ -1309,7 +1309,8 @@ static int cslide_scan_vmas(struct cslide_pid_params *params)
+         walk_address.walk_start = vma->start;
+         walk_address.walk_end = vma->end;
+         if (walk_vmas(fd, &walk_address, &vma_pf->page_refs, NULL) == NULL) {
+-            etmemd_log(ETMEMD_LOG_ERR, "task %u scan vma start %llu end %llu fail\n", params->pid, vma->start, vma->end);
++            etmemd_log(ETMEMD_LOG_ERR, "task %u scan vma start %llu end %llu fail\n",
++                    params->pid, vma->start, vma->end);
+             fclose(scan_fp);
+             return -1;
+         }
+-- 
+2.27.0
+

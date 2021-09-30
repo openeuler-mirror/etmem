@@ -1,0 +1,64 @@
+From 8945313183ecfd752c4d8fbd5d8e5e464bd9ed37 Mon Sep 17 00:00:00 2001
+From: Kemeng Shi <shikemeng@huawei.com>
+Date: Wed, 26 May 2021 19:57:09 +0800
+Subject: [PATCH 41/50] return error if migrate failed and clean code
+
+Signed-off-by: Kemeng Shi <shikemeng@huawei.com>
+---
+ src/etmemd_src/etmemd_cslide.c | 14 ++++++++++----
+ src/etmemd_src/etmemd_scan.c   |  3 ---
+ 2 files changed, 10 insertions(+), 7 deletions(-)
+
+diff --git a/src/etmemd_src/etmemd_cslide.c b/src/etmemd_src/etmemd_cslide.c
+index 745dbcc..3a30d6b 100644
+--- a/src/etmemd_src/etmemd_cslide.c
++++ b/src/etmemd_src/etmemd_cslide.c
+@@ -1445,21 +1445,27 @@ static int cslide_do_migrate(struct cslide_eng_params *eng_params)
+     struct cslide_pid_params *iter = NULL;
+     struct node_pair *pair = NULL;
+     int bind_node, i;
++    int ret = 0;
+ 
+     factory_foreach_working_pid_params(iter, &eng_params->factory) {
+         for (i = 0; i < eng_params->node_map.cur_num; i++) {
+             pair = &eng_params->node_map.pair[i];
+             bind_node = pair->hot_node < pair->cold_node ? pair->hot_node : pair->cold_node;
+             if (numa_run_on_node(bind_node) != 0) {
+-                etmemd_log(ETMEMD_LOG_ERR, "fail to run on node %d to migrate memory\n", bind_node);
++                etmemd_log(ETMEMD_LOG_INFO, "fail to run on node %d to migrate memory\n", bind_node);
++            }
++            ret = migrate_single_task(iter->pid, &iter->memory_grade[i], pair->hot_node, pair->cold_node);
++            if (ret != 0) {
++                goto exit;
+             }
+-            migrate_single_task(iter->pid, &iter->memory_grade[i], pair->hot_node, pair->cold_node);
+         }
+     }
++
++exit:
+     if (numa_run_on_node(-1) != 0) {
+-        etmemd_log(ETMEMD_LOG_ERR, "fail to run on all node after migrate memory\n");
++        etmemd_log(ETMEMD_LOG_INFO, "fail to run on all node after migrate memory\n");
+     }
+-    return 0;
++    return ret;
+ }
+ 
+ static void init_host_pages_info(struct cslide_eng_params *eng_params)
+diff --git a/src/etmemd_src/etmemd_scan.c b/src/etmemd_src/etmemd_scan.c
+index c287c48..ed17d2b 100644
+--- a/src/etmemd_src/etmemd_scan.c
++++ b/src/etmemd_src/etmemd_scan.c
+@@ -27,9 +27,6 @@
+ #include "etmemd_log.h"
+ #include "securec.h"
+ 
+-#define PTE_SIZE_SHIFT 12
+-#define PMD_SIZE_SHIFT 21
+-#define PUD_SIZE_SHIFT 30
+ #define HEXADECIMAL_RADIX 16
+ #define PMD_IDLE_PTES_PARAMETER 512
+ #define VMFLAG_MAX_NUM 30
+-- 
+2.27.0
+
