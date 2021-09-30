@@ -1,0 +1,549 @@
+From c009890697542083329ee384ac0e72f3c976f331 Mon Sep 17 00:00:00 2001
+From: Kemeng Shi <shikemeng@huawei.com>
+Date: Thu, 6 May 2021 10:32:50 +0800
+Subject: [PATCH 21/50] add thirdpart engine
+
+Signed-off-by: Kemeng Shi <shikemeng@huawei.com>
+---
+ CMakeLists.txt                     |   1 +
+ inc/etmemd_inc/etmemd_cslide.h     |   2 +-
+ inc/etmemd_inc/etmemd_engine.h     |   1 +
+ inc/etmemd_inc/etmemd_slide.h      |   2 +-
+ inc/etmemd_inc/etmemd_thirdparty.h |  24 ++++
+ src/etmemd_src/etmemd_cslide.c     |   2 +-
+ src/etmemd_src/etmemd_engine.c     |  51 +++++++--
+ src/etmemd_src/etmemd_project.c    |  75 ++++++------
+ src/etmemd_src/etmemd_rpc.c        |   2 +-
+ src/etmemd_src/etmemd_slide.c      |   2 +-
+ src/etmemd_src/etmemd_thirdparty.c | 178 +++++++++++++++++++++++++++++
+ 11 files changed, 291 insertions(+), 49 deletions(-)
+ create mode 100644 inc/etmemd_inc/etmemd_thirdparty.h
+ create mode 100644 src/etmemd_src/etmemd_thirdparty.c
+
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index fa64b89..9ce4724 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -33,6 +33,7 @@ set(ETMEMD_SRC
+  ${ETMEMD_SRC_DIR}/etmemd_engine.c
+  ${ETMEMD_SRC_DIR}/etmemd_slide.c
+  ${ETMEMD_SRC_DIR}/etmemd_cslide.c
++ ${ETMEMD_SRC_DIR}/etmemd_thirdparty.c
+  ${ETMEMD_SRC_DIR}/etmemd_task.c
+  ${ETMEMD_SRC_DIR}/etmemd_scan.c
+  ${ETMEMD_SRC_DIR}/etmemd_threadpool.c
+diff --git a/inc/etmemd_inc/etmemd_cslide.h b/inc/etmemd_inc/etmemd_cslide.h
+index 2405f2d..9b03f6f 100644
+--- a/inc/etmemd_inc/etmemd_cslide.h
++++ b/inc/etmemd_inc/etmemd_cslide.h
+@@ -18,6 +18,6 @@
+ 
+ #include "etmemd_engine.h"
+ 
+-int fill_engine_type_cslide(struct engine *eng);
++int fill_engine_type_cslide(struct engine *eng, GKeyFile *config);
+ 
+ #endif
+diff --git a/inc/etmemd_inc/etmemd_engine.h b/inc/etmemd_inc/etmemd_engine.h
+index 77916a5..36e1760 100644
+--- a/inc/etmemd_inc/etmemd_engine.h
++++ b/inc/etmemd_inc/etmemd_engine.h
+@@ -42,6 +42,7 @@ struct engine {
+     struct task *tasks;
+     uint64_t page_cnt;          /* number of pages */
+     struct engine *next;
++    void *handler;
+ };
+ 
+ struct engine_ops {
+diff --git a/inc/etmemd_inc/etmemd_slide.h b/inc/etmemd_inc/etmemd_slide.h
+index e76e97a..af48be7 100644
+--- a/inc/etmemd_inc/etmemd_slide.h
++++ b/inc/etmemd_inc/etmemd_slide.h
+@@ -24,6 +24,6 @@ struct slide_params {
+     int t;          /* watermark */
+ };
+ 
+-int fill_engine_type_slide(struct engine *eng);
++int fill_engine_type_slide(struct engine *eng, GKeyFile *config);
+ 
+ #endif
+diff --git a/inc/etmemd_inc/etmemd_thirdparty.h b/inc/etmemd_inc/etmemd_thirdparty.h
+new file mode 100644
+index 0000000..1cd750c
+--- /dev/null
++++ b/inc/etmemd_inc/etmemd_thirdparty.h
+@@ -0,0 +1,24 @@
++/******************************************************************************
++ * Copyright (c) Huawei Technologies Co., Ltd. 2019-2021. All rights reserved.
++ * etmem is licensed under the Mulan PSL v2.
++ * You can use this software according to the terms and conditions of the Mulan PSL v2.
++ * You may obtain a copy of Mulan PSL v2 at:
++ * http://license.coscl.org.cn/MulanPSL2
++ * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR
++ * IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY OR FIT FOR A PARTICULAR
++ * PURPOSE.
++ * See the Mulan PSL v2 for more details.
++ * Author: shikemeng
++ * Create: 2021-4-30
++ * Description: This is a header file of the function declaration for thirdparty function.
++ ******************************************************************************/
++
++#ifndef ETMEMD_THIRDPARTY_H
++#define ETMEMD_THIRDPARTY_H
++
++#include "etmemd_engine.h"
++
++int fill_engine_type_thirdparty(struct engine *eng, GKeyFile *config);
++void clear_engine_type_thirdparty(struct engine *eng);
++
++#endif
+diff --git a/src/etmemd_src/etmemd_cslide.c b/src/etmemd_src/etmemd_cslide.c
+index 9c65464..71b510f 100644
+--- a/src/etmemd_src/etmemd_cslide.c
++++ b/src/etmemd_src/etmemd_cslide.c
+@@ -2153,7 +2153,7 @@ struct engine_ops g_cslide_eng_ops = {
+     .eng_mgt_func = cslide_engine_do_cmd,
+ };
+ 
+-int fill_engine_type_cslide(struct engine *eng)
++int fill_engine_type_cslide(struct engine *eng, GKeyFile *config)
+ {
+     eng->ops = &g_cslide_eng_ops;
+     eng->engine_type = CSLIDE_ENGINE;
+diff --git a/src/etmemd_src/etmemd_engine.c b/src/etmemd_src/etmemd_engine.c
+index 98a7430..c745e15 100644
+--- a/src/etmemd_src/etmemd_engine.c
++++ b/src/etmemd_src/etmemd_engine.c
+@@ -18,27 +18,51 @@
+ #include "etmemd_engine.h"
+ #include "etmemd_slide.h"
+ #include "etmemd_cslide.h"
++#include "etmemd_thirdparty.h"
+ #include "etmemd_log.h"
+ #include "etmemd_common.h"
+ #include "etmemd_file.h"
+ 
+-struct engine_item {
++struct engine_add_item {
+     char *name;
+-    int (*fill_eng_func)(struct engine *eng);
++    int (*fill_eng_func)(struct engine *eng, GKeyFile *config);
+ };
+ 
+-static struct engine_item g_engine_items[] = {
++struct engine_remove_item {
++    int type;
++    void (*clear_eng_func)(struct engine *eng);
++};
++
++static struct engine_add_item g_engine_add_items[] = {
+     {"slide", fill_engine_type_slide},
+     {"cslide", fill_engine_type_cslide},
++    {"thirdparty", fill_engine_type_thirdparty},
++};
++
++static struct engine_add_item *find_engine_add_item(const char *name)
++{
++    unsigned i;
++
++    for (i = 0; i < ARRAY_SIZE(g_engine_add_items); i++) {
++        if (strcmp(name, g_engine_add_items[i].name) == 0) {
++            return &g_engine_add_items[i];
++        }
++    }
++
++    return NULL;
++}
++
++static struct engine_remove_item g_engine_remove_items[] = {
++    {THIRDPARTY_ENGINE, clear_engine_type_thirdparty},
+ };
+ 
+-static struct engine_item *find_engine_item(const char *name)
++static struct engine_remove_item *find_engine_remove_item(int type)
+ {
+     unsigned i;
+ 
+-    for (i = 0; i < ARRAY_SIZE(g_engine_items); i++) {
+-        if (strcmp(name, g_engine_items[i].name) == 0) {
+-            return &g_engine_items[i];
++    for (i = 0; i < ARRAY_SIZE(g_engine_remove_items); i++) {
++        if (g_engine_remove_items[i].type == type) {
++            return &g_engine_remove_items[i];
+         }
+     }
+ 
+@@ -48,7 +72,7 @@ static struct engine_item *find_engine_item(const char *name)
+ struct engine *etmemd_engine_add(GKeyFile *config)
+ {
+     struct engine *eng = NULL;
+-    struct engine_item *item = NULL;
++    struct engine_add_item *item = NULL;
+     char *name = NULL;
+ 
+     if (g_key_file_has_key(config, ENG_GROUP, "name", NULL) == FALSE) {
+@@ -62,7 +86,7 @@ struct engine *etmemd_engine_add(GKeyFile *config)
+         return NULL;
+     }
+ 
+-    item = find_engine_item(name);
++    item = find_engine_add_item(name);
+     if (item == NULL) {
+         etmemd_log(ETMEMD_LOG_ERR, "engine %s not support\n", name);
+         goto free_name;
+@@ -74,7 +98,7 @@ struct engine *etmemd_engine_add(GKeyFile *config)
+         goto free_name;
+     }
+ 
+-    if (item->fill_eng_func(eng) != 0) {
++    if (item->fill_eng_func(eng, config) != 0) {
+         etmemd_log(ETMEMD_LOG_ERR, "fill engine %s fail\n", name);
+         free(eng);
+         eng = NULL;
+@@ -94,5 +118,12 @@ free_name:
+ 
+ void etmemd_engine_remove(struct engine *eng)
+ {
++    struct engine_remove_item *item = NULL;
++
++    item = find_engine_remove_item(eng->engine_type);
++    if (item != NULL) {
++        item->clear_eng_func(eng);
++    }
++
+     free(eng);
+ }
+diff --git a/src/etmemd_src/etmemd_project.c b/src/etmemd_src/etmemd_project.c
+index b3158d8..885c86e 100644
+--- a/src/etmemd_src/etmemd_project.c
++++ b/src/etmemd_src/etmemd_project.c
+@@ -76,7 +76,7 @@ static struct task *get_task_by_name(struct project *proj, struct engine *eng, c
+     return NULL;
+ }
+ 
+-static char *get_obj_key(char *obj_name, const char *group_name)
++static const char *get_obj_key(const char *obj_name, const char *group_name)
+ {
+     if (strcmp(obj_name, group_name) == 0) {
+         return "name";
+@@ -85,46 +85,61 @@ static char *get_obj_key(char *obj_name, const char *group_name)
+     }
+ }
+ 
+-static enum opt_result project_of_group(GKeyFile *config, const char *group_name, struct project **proj)
++static enum opt_result get_name_by_key(GKeyFile *config, const char *group_name, const char *key, char **name)
+ {
+-    *proj = NULL;
+-    char *proj_name = NULL;
+-    char *key = NULL;
+-
+-    key = get_obj_key(PROJ_GROUP, group_name);
+     if (g_key_file_has_key(config, group_name, key, NULL) == FALSE) {
+-        etmemd_log(ETMEMD_LOG_ERR, "project name is not set for %s\n", group_name);
++        etmemd_log(ETMEMD_LOG_ERR, "key %s is not set in group %s\n", key, group_name);
+         return OPT_INVAL;
+     }
+ 
+-    proj_name = g_key_file_get_string(config, group_name, key, NULL);
+-    if (proj_name == NULL) {
+-        etmemd_log(ETMEMD_LOG_ERR, "get project name from %s fail\n", group_name);
++    *name = g_key_file_get_string(config, group_name, key, NULL);
++    if (*name == NULL) {
++        etmemd_log(ETMEMD_LOG_ERR, "get value of key %s from group %s fail\n", key, group_name);
+         return OPT_INTER_ERR;
+     }
+ 
+-    *proj = get_proj_by_name(proj_name);
++    return OPT_SUCCESS;
++}
++
++static enum opt_result get_obj_name(GKeyFile *config, const char *group_name, const char *obj, char **name)
++{
++    const char *key = get_obj_key(obj, group_name);
++
++    return get_name_by_key(config, group_name, key, name);
++}
+ 
++static enum opt_result project_of_group(GKeyFile *config, const char *group_name, struct project **proj)
++{
++    char *proj_name = NULL;
++    enum opt_result ret;
++
++    ret = get_obj_name(config, group_name, PROJ_GROUP, &proj_name);
++    if (ret != OPT_SUCCESS) {
++        return ret;
++    }
++
++    *proj = get_proj_by_name(proj_name);
+     free(proj_name);
+     return OPT_SUCCESS;
+ }
+ 
+ static enum opt_result engine_of_group(GKeyFile *config, char *group_name, struct project *proj, struct engine **eng)
+ {
+-    char *key = NULL;
+     char *eng_name = NULL;
+-    *eng = NULL;
++    enum opt_result ret;
+ 
+-    key = get_obj_key(ENG_GROUP, group_name);
+-    if (g_key_file_has_key(config, group_name, key, NULL) == FALSE) {
+-        etmemd_log(ETMEMD_LOG_ERR, "engine is not set for %s\n", group_name);
+-        return OPT_INVAL;
++    ret = get_obj_name(config, group_name, ENG_GROUP, &eng_name);
++    if (ret != OPT_SUCCESS) {
++        return ret;
+     }
+ 
+-    eng_name = g_key_file_get_string(config, group_name, key, NULL);
+-    if (eng_name == NULL) {
+-        etmemd_log(ETMEMD_LOG_ERR, "get engine name from %s fail\n", group_name);
+-        return OPT_INTER_ERR;
++    // real engine name is set with "eng_name" for thirdparty engine
++    if (strcmp(eng_name, "thirdparty") == 0 && strcmp(group_name, ENG_GROUP) == 0) {
++        free(eng_name);
++        ret = get_name_by_key(config, ENG_GROUP, "eng_name", &eng_name);
++        if (ret != OPT_SUCCESS) {
++            return ret;
++        }
+     }
+ 
+     *eng = get_eng_by_name(proj, eng_name);
+@@ -136,19 +151,11 @@ static enum opt_result task_of_group(GKeyFile *config, char *group_name,
+         struct project *proj, struct engine *eng, struct task **tk)
+ {
+     char *task_name = NULL;
+-    char *key = NULL;
+-    *tk = NULL;
+-
+-    key = get_obj_key(TASK_GROUP, group_name);
+-    if (g_key_file_has_key(config, group_name, key, NULL) == FALSE) {
+-        etmemd_log(ETMEMD_LOG_ERR, "task name is not set for %s\n", group_name);
+-        return OPT_INVAL;
+-    }
++    enum opt_result ret;
+ 
+-    task_name = g_key_file_get_string(config, group_name, key, NULL);
+-    if (task_name == NULL) {
+-        etmemd_log(ETMEMD_LOG_ERR, "get task name from %s fail\n", group_name);
+-        return OPT_INTER_ERR;
++    ret = get_obj_name(config, group_name, TASK_GROUP, &task_name);
++    if (ret != OPT_SUCCESS) {
++        return ret;
+     }
+ 
+     *tk = get_task_by_name(proj, eng, task_name);
+diff --git a/src/etmemd_src/etmemd_rpc.c b/src/etmemd_src/etmemd_rpc.c
+index d7bf8d7..49c292d 100644
+--- a/src/etmemd_src/etmemd_rpc.c
++++ b/src/etmemd_src/etmemd_rpc.c
+@@ -549,7 +549,7 @@ static void etmemd_rpc_handle(int sock_fd)
+     return;
+ }
+ 
+-int check_socket_permission(int sock_fd) {
++static int check_socket_permission(int sock_fd) {
+     struct ucred cred;
+     socklen_t len;
+     ssize_t rc;
+diff --git a/src/etmemd_src/etmemd_slide.c b/src/etmemd_src/etmemd_slide.c
+index f7609f4..64d0533 100644
+--- a/src/etmemd_src/etmemd_slide.c
++++ b/src/etmemd_src/etmemd_slide.c
+@@ -211,7 +211,7 @@ struct engine_ops g_slide_eng_ops = {
+     .eng_mgt_func = NULL,
+ };
+ 
+-int fill_engine_type_slide(struct engine *eng)
++int fill_engine_type_slide(struct engine *eng, GKeyFile *config)
+ {
+     eng->ops = &g_slide_eng_ops;
+     eng->engine_type = SLIDE_ENGINE;
+diff --git a/src/etmemd_src/etmemd_thirdparty.c b/src/etmemd_src/etmemd_thirdparty.c
+new file mode 100644
+index 0000000..1a05512
+--- /dev/null
++++ b/src/etmemd_src/etmemd_thirdparty.c
+@@ -0,0 +1,178 @@
++/******************************************************************************
++ * Copyright (c) Huawei Technologies Co., Ltd. 2019-2021. All rights reserved.
++ * etmem is licensed under the Mulan PSL v2.
++ * You can use this software according to the terms and conditions of the Mulan PSL v2.
++ * You may obtain a copy of Mulan PSL v2 at:
++ * http://license.coscl.org.cn/MulanPSL2
++ * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR
++ * IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY OR FIT FOR A PARTICULAR
++ * PURPOSE.
++ * See the Mulan PSL v2 for more details.
++ * Author: shikemeng
++ * Create: 2021-04-30
++ * Description: Memigd thirdparty API.
++ ******************************************************************************/
++
++#include <stdio.h>
++#include <dlfcn.h>
++
++#include "etmemd_engine.h"
++#include "etmemd_file.h"
++#include "etmemd_log.h"
++#include "etmemd_common.h"
++#include "etmemd_thirdparty.h"
++#include "securec.h"
++
++struct thirdparty_params {
++    char *eng_name;
++    char *libname;
++    char *ops_name;
++};
++
++static int fill_eng_name(void *obj, void *val)
++{
++    char *eng_name = (char *)val;
++    struct thirdparty_params *params = (struct thirdparty_params *)obj;
++
++    params->eng_name = eng_name;
++    return 0;
++}
++
++static int fill_libname(void *obj, void *val)
++{
++    char *libname = (char *)val;
++    struct thirdparty_params *params = (struct thirdparty_params *)obj;
++
++    params->libname = libname;
++    return 0;
++}
++
++static int fill_ops_name(void *obj, void *val)
++{
++    char *ops_name = (char *)val;
++    struct thirdparty_params *params = (struct thirdparty_params *)obj;
++
++    params->ops_name = ops_name;
++    return 0;
++}
++
++static struct config_item g_thirdparty_configs[] = {
++    {"eng_name", STR_VAL, fill_eng_name, false},
++    {"libname", STR_VAL, fill_libname, false},
++    {"ops_name", STR_VAL, fill_ops_name, false},
++};
++
++static void clear_thirdparty_params(struct thirdparty_params *params)
++{
++    if (params->eng_name != NULL) {
++        free(params->eng_name);
++        params->eng_name = NULL;
++    }
++    if (params->libname != NULL) {
++        free(params->libname);
++        params->libname = NULL;
++    }
++    if (params->ops_name != NULL) {
++        free(params->ops_name);
++        params->ops_name = NULL;
++    }
++}
++
++static int set_engine_ops(struct engine *eng, struct thirdparty_params *params)
++{
++    void *handler = NULL;
++    struct engine_ops *ops = NULL;
++    char *err = NULL;
++
++    handler = dlopen(params->libname, RTLD_NOW | RTLD_LOCAL);
++    if (handler == NULL) {
++        err = dlerror();
++        etmemd_log(ETMEMD_LOG_ERR, "load library %s fail with error: %s\n", params->libname, err);
++        return -1;
++    }
++
++    /* Clear error */
++    dlerror();
++    ops = dlsym(handler, params->ops_name);
++    err = dlerror();
++    if (err != NULL) {
++        etmemd_log(ETMEMD_LOG_ERR, "load engine_ops symbol %s fail with error: %s\n", params->ops_name, err);
++        dlclose(handler);
++        return -1;
++    }
++
++    eng->ops = ops;
++    eng->handler = handler;
++    return 0;
++}
++
++static void clear_engine_ops(struct engine *eng)
++{
++    dlclose(eng->handler);
++    eng->handler = NULL;
++    eng->ops = NULL;
++}
++
++static void set_engine_name(struct engine *eng, struct thirdparty_params *params)
++{
++    eng->name = params->eng_name;
++    /* avoid that eng_name will be freed in clear_thirdparty_params */
++    params->eng_name = NULL;
++}
++
++static void clear_engine_name(struct engine *eng)
++{
++    free(eng->name);
++    eng->name = NULL;
++}
++
++static int set_engine(struct engine *eng, struct thirdparty_params *params)
++{
++    if (set_engine_ops(eng, params) != 0) {
++        etmemd_log(ETMEMD_LOG_ERR, "set engine ops fail\n");
++        return -1;
++    }
++    set_engine_name(eng, params);
++    eng->engine_type = THIRDPARTY_ENGINE;
++
++    return 0;
++}
++
++static void clear_engine(struct engine *eng)
++{
++    clear_engine_name(eng);
++    clear_engine_ops(eng);
++}
++
++int fill_engine_type_thirdparty(struct engine *eng, GKeyFile *config)
++{
++    struct thirdparty_params params;
++    int ret = -1;
++
++    if (memset_s(&params, sizeof(struct thirdparty_params), 0, sizeof(struct thirdparty_params)) != EOK) {
++        etmemd_log(ETMEMD_LOG_ERR, "memset_s for thirdparty_params fail\n");
++        return -1;
++    }
++
++    if (parse_file_config(config, ENG_GROUP, g_thirdparty_configs,
++                ARRAY_SIZE(g_thirdparty_configs), &params) != 0) {
++        etmemd_log(ETMEMD_LOG_ERR, "parse thirdparty_params fail\n");
++        goto clear_params;
++    }
++
++    if (set_engine(eng, &params) != 0) {
++        etmemd_log(ETMEMD_LOG_ERR, "set engine fail\n");
++        goto clear_params;
++    }
++
++    ret = 0;
++
++clear_params:
++    clear_thirdparty_params(&params);
++    return ret;
++}
++
++void clear_engine_type_thirdparty(struct engine *eng)
++{
++    clear_engine(eng);
++}
+-- 
+2.27.0
+

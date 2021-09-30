@@ -1,0 +1,78 @@
+From a8bea6d5ffcfe66020832eb57d233f4962aa3672 Mon Sep 17 00:00:00 2001
+From: Kemeng Shi <shikemeng@huawei.com>
+Date: Thu, 29 Apr 2021 18:58:52 +0800
+Subject: [PATCH 19/50] accept review advise
+
+Signed-off-by: Kemeng Shi <shikemeng@huawei.com>
+---
+ src/etmem_src/etmem_engine.c   | 7 ++++---
+ src/etmemd_src/etmemd_cslide.c | 4 ++--
+ src/etmemd_src/etmemd_rpc.c    | 3 +++
+ 3 files changed, 9 insertions(+), 5 deletions(-)
+
+diff --git a/src/etmem_src/etmem_engine.c b/src/etmem_src/etmem_engine.c
+index e744aaa..bafcfe6 100644
+--- a/src/etmem_src/etmem_engine.c
++++ b/src/etmem_src/etmem_engine.c
+@@ -24,8 +24,8 @@
+ static void engine_help(void)
+ {
+     printf("\nUsage:\n"
+-            "    memig engine eng_cmd [options]\n"
+-            "    memig engine help\n"
++            "    etmem engine eng_cmd [options]\n"
++            "    etmem engine help\n"
+             "\nOptions:\n"
+             "    -n|--proj_name <proj_name> project engine belongs to\n"
+             "    -s|--socket <socket_name> socket name to connect\n"
+@@ -35,7 +35,8 @@ static void engine_help(void)
+             "    1. project name must be given.\n"
+             "    2. socket name must be given.\n"
+             "    3. engine name must be given.\n"
+-            "    4. engine cmd must be given.\n");
++            "    4. engine cmd must be given.\n"
++            "    5. eng_cmd is supported by engine own.\n");
+ }
+ 
+ static int engine_parse_cmd(struct etmem_conf *conf, struct mem_proj *proj)
+diff --git a/src/etmemd_src/etmemd_cslide.c b/src/etmemd_src/etmemd_cslide.c
+index 5914ca1..9c65464 100644
+--- a/src/etmemd_src/etmemd_cslide.c
++++ b/src/etmemd_src/etmemd_cslide.c
+@@ -1422,7 +1422,7 @@ static int migrate_single_task(unsigned int pid, const struct memory_grade *memo
+         return -1;
+     }
+     if (moved != 0) {
+-        etmemd_log(ETMEMD_LOG_INFO, "task %u move pages %lld KB from node %d to node %d\n",
++        etmemd_log(ETMEMD_LOG_INFO, "task %u move pages %llu KB from node %d to node %d\n",
+                 pid, HUGE_2M_TO_KB((unsigned int)moved), hot_node, cold_node);
+     }
+ 
+@@ -1432,7 +1432,7 @@ static int migrate_single_task(unsigned int pid, const struct memory_grade *memo
+         return -1;
+     }
+     if (moved != 0) {
+-        etmemd_log(ETMEMD_LOG_INFO, "task %u move pages %lld KB from node %d to %d\n",
++        etmemd_log(ETMEMD_LOG_INFO, "task %u move pages %llu KB from node %d to %d\n",
+                 pid, HUGE_2M_TO_KB((unsigned int)moved), cold_node, hot_node);
+     }
+ 
+diff --git a/src/etmemd_src/etmemd_rpc.c b/src/etmemd_src/etmemd_rpc.c
+index 09497b3..fe0b975 100644
+--- a/src/etmemd_src/etmemd_rpc.c
++++ b/src/etmemd_src/etmemd_rpc.c
+@@ -212,8 +212,11 @@ static int check_cmd_permission(int sock_fd, int cmd)
+ {
+     switch (cmd) {
+         case OBJ_ADD:
++            /* fallthrough */
+         case OBJ_DEL:
++            /* fallthrough */
+         case MIG_STOP:
++            /* fallthrough */
+         case MIG_START:
+             return check_socket_permission(sock_fd);
+         default:
+-- 
+2.27.0
+
