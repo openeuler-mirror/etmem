@@ -53,7 +53,8 @@ Patch42: 0043-update-README.md.patch
 Patch43: 0044-etmem-cleancode.patch
 Patch44: 0045-add-dram_percent-to-etmem.patch
 Patch45: 0046-Fix-memory-leak-in-slide-engine.patch
-
+Patch46: 0047-move-all-the-files-to-sub-directory-of-etmem.patch
+Patch47: 0048-Commit-new-features-memRouter-and-userswap-to-etmem.patch
 
 #Dependency
 BuildRequires: cmake gcc gcc-c++
