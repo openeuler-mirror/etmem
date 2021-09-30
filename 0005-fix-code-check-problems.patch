@@ -1,0 +1,256 @@
+From b54b30489959a7692cc6d484e3b16d1d54f7ed85 Mon Sep 17 00:00:00 2001
+From: Kemeng Shi <shikemeng@huawei.com>
+Date: Sun, 25 Apr 2021 21:44:44 +0800
+Subject: [PATCH 05/50] fix code check problems
+
+Signed-off-by: Kemeng Shi <shikemeng@huawei.com>
+---
+ inc/etmemd_inc/etmemd_project.h |  3 ++-
+ src/etmem_src/etmem_common.c    |  2 +-
+ src/etmemd_src/etmemd_common.c  |  2 ++
+ src/etmemd_src/etmemd_cslide.c  | 32 +++++++++++++++++++++-----------
+ src/etmemd_src/etmemd_project.c |  9 ++++++---
+ src/etmemd_src/etmemd_rpc.c     |  4 ++--
+ src/etmemd_src/etmemd_slide.c   |  4 ++--
+ 7 files changed, 36 insertions(+), 20 deletions(-)
+
+diff --git a/inc/etmemd_inc/etmemd_project.h b/inc/etmemd_inc/etmemd_project.h
+index d15c7fd..e574a84 100644
+--- a/inc/etmemd_inc/etmemd_project.h
++++ b/inc/etmemd_inc/etmemd_project.h
+@@ -102,7 +102,8 @@ enum opt_result etmemd_migrate_start(const char *project_name);
+   * */
+ enum opt_result etmemd_migrate_stop(const char *project_name);
+ 
+-enum opt_result etmemd_project_mgt_engine(const char *project_name, const char *eng_name, char *cmd, char *task_name, int sock_fd);
++enum opt_result etmemd_project_mgt_engine(const char *project_name, const char *eng_name, char *cmd, char *task_name,
++        int sock_fd);
+ enum opt_result etmemd_project_add_engine(GKeyFile *config);
+ enum opt_result etmemd_project_remove_engine(GKeyFile *config);
+ enum opt_result etmemd_project_add_task(GKeyFile *config);
+diff --git a/src/etmem_src/etmem_common.c b/src/etmem_src/etmem_common.c
+index 65d3690..8d0cee3 100644
+--- a/src/etmem_src/etmem_common.c
++++ b/src/etmem_src/etmem_common.c
+@@ -36,7 +36,7 @@ int parse_name_string(const char *val, char **name_str, size_t max_len)
+         return -EINVAL;
+     }
+     if (len > max_len) {
+-        printf("string is too long, it should not be larger than %lu\n", max_len);
++        printf("string is too long, it should not be larger than %zu\n", max_len);
+         return -ENAMETOOLONG;
+     }
+ 
+diff --git a/src/etmemd_src/etmemd_common.c b/src/etmemd_src/etmemd_common.c
+index 43ed013..4b9c4cb 100644
+--- a/src/etmemd_src/etmemd_common.c
++++ b/src/etmemd_src/etmemd_common.c
+@@ -403,12 +403,14 @@ int dprintf_all(int fd, const char *format, ...)
+     ret = vsprintf_s(line, FILE_LINE_MAX_LEN, format, args_in);
+     if (ret > FILE_LINE_MAX_LEN) {
+         etmemd_log(ETMEMD_LOG_ERR, "fprintf_all fail as truncated.\n");
++        va_end(args_in);
+         return -1;
+     }
+ 
+     ret = write_all(fd, line);
+     if (ret < 0) {
+         etmemd_log(ETMEMD_LOG_ERR, "write_all fail.\n");
++        va_end(args_in);
+         return -1;
+     }
+ 
+diff --git a/src/etmemd_src/etmemd_cslide.c b/src/etmemd_src/etmemd_cslide.c
+index a3692ad..5fd1c32 100644
+--- a/src/etmemd_src/etmemd_cslide.c
++++ b/src/etmemd_src/etmemd_cslide.c
+@@ -8,7 +8,7 @@
+  * IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY OR FIT FOR A PARTICULAR
+  * PURPOSE.
+  * See the Mulan PSL v2 for more details.
+- * Author: louhongxiang
++ * Author: shikemeng
+  * Create: 2021-4-19
+  * Description: Memigd cslide API.
+  ******************************************************************************/
+@@ -44,7 +44,9 @@
+ #define BATCHSIZE (1 << 16)
+ 
+ #define factory_foreach_working_pid_params(iter, factory) \
+-    for ((iter) = (factory)->working_head, next_working_params(&(iter)); (iter) != NULL; (iter) = (iter)->next, next_working_params(&(iter)))
++    for ((iter) = (factory)->working_head, next_working_params(&(iter)); \
++            (iter) != NULL; \
++            (iter) = (iter)->next, next_working_params(&(iter)))
+ 
+ #define factory_foreach_pid_params(iter, factory) \
+     for ((iter) = (factory)->working_head; (iter) != NULL; (iter) = (iter)->next)
+@@ -184,7 +186,8 @@ struct page_filter {
+     void (*flow_cal_func)(struct flow_ctrl *ctrl);
+     long long (*flow_move_func)(struct flow_ctrl *ctrl, long long target, int node);
+     bool (*flow_enough)(struct flow_ctrl *ctrl);
+-    void (*filter_policy)(struct page_filter *filter, struct node_pair *pair, struct count_page_refs *cpf, struct memory_grade *memory_grade);
++    void (*filter_policy)(struct page_filter *filter, struct node_pair *pair,
++            struct count_page_refs *cpf, struct memory_grade *memory_grade);
+     struct flow_ctrl *ctrl;
+     int count_start;
+     int count_end;
+@@ -509,7 +512,6 @@ static int add_node_pair(struct node_map *map, int cold_node, int hot_node)
+     return 0;
+ }
+ 
+-
+ static int init_node_verifier(struct node_verifier *nv, int node_num)
+ {
+     nv->nodes_map_count = calloc(node_num, sizeof(int));
+@@ -933,7 +935,8 @@ static bool node_cal_cold_can_move(struct node_ctrl *node_ctrl)
+ {
+     long long can_move;
+ 
+-    can_move = node_ctrl->quota < node_ctrl->reserve - node_ctrl->free ? node_ctrl->quota : node_ctrl->reserve - node_ctrl->free;
++    can_move = node_ctrl->quota < node_ctrl->reserve - node_ctrl->free ?
++        node_ctrl->quota : node_ctrl->reserve - node_ctrl->free;
+     if (can_move > node_ctrl->cold_free) {
+         can_move = node_ctrl->cold_free;
+     }
+@@ -956,7 +959,8 @@ static inline bool node_move_cold(struct node_ctrl *node_ctrl, long long *target
+     return cap_cost(&node_ctrl->cold_move_cap, target);
+ }
+ 
+-static int init_flow_ctrl(struct flow_ctrl *ctrl, struct sys_mem *sys_mem, struct node_map *node_map, long long quota, long long reserve)
++static int init_flow_ctrl(struct flow_ctrl *ctrl, struct sys_mem *sys_mem, struct node_map *node_map,
++        long long quota, long long reserve)
+ {
+     struct node_pair *pair = NULL;
+     struct node_ctrl *tmp = NULL;
+@@ -1114,7 +1118,8 @@ static void do_filter(struct page_filter *filter, struct cslide_eng_params *eng_
+     }
+ }
+ 
+-static void to_hot_policy(struct page_filter *filter, struct node_pair *pair, struct count_page_refs *cpf, struct memory_grade *memory_grade)
++static void to_hot_policy(struct page_filter *filter, struct node_pair *pair,
++        struct count_page_refs *cpf, struct memory_grade *memory_grade)
+ {
+     long long can_move;
+     struct node_page_refs *npf = &cpf->node_pfs[pair->cold_node];
+@@ -1123,7 +1128,8 @@ static void to_hot_policy(struct page_filter *filter, struct node_pair *pair, st
+     move_npf_to_list(npf, &memory_grade->hot_pages, can_move);
+ }
+ 
+-static void to_cold_policy(struct page_filter *filter, struct node_pair *pair, struct count_page_refs *cpf, struct memory_grade *memory_grade)
++static void to_cold_policy(struct page_filter *filter, struct node_pair *pair,
++        struct count_page_refs *cpf, struct memory_grade *memory_grade)
+ {
+     long long can_move;
+     struct node_page_refs *npf = &cpf->node_pfs[pair->hot_node];
+@@ -1376,7 +1382,9 @@ static int cslide_merge_share_vmas(struct cslide_eng_params *eng_params)
+ 
+     vma_pf = g_share_vma_head;
+     while (vma_pf != NULL) {
+-        for (iter = vma_pf->next, count = 1; iter != NULL && iter->vma->inode == vma_pf->vma->inode; iter = iter->next, count++) {
++        for (iter = vma_pf->next, count = 1;
++                iter != NULL && iter->vma->inode == vma_pf->vma->inode;
++                iter = iter->next, count++) {
+             ;
+         }
+         if (count > 1) {
+@@ -1403,7 +1411,8 @@ static int cslide_get_vmas(struct cslide_pid_params *pid_params)
+         etmemd_log(ETMEMD_LOG_ERR, "sprintf pid %u fail\n", pid_params->pid);
+         return -1;
+     }
+-    pid_params->vmas = get_vmas_with_flags(pid, task_params->vmflags_array, task_params->vmflags_num, task_params->anon_only);
++    pid_params->vmas = get_vmas_with_flags(pid, task_params->vmflags_array, task_params->vmflags_num,
++            task_params->anon_only);
+     if (pid_params->vmas == NULL) {
+         etmemd_log(ETMEMD_LOG_ERR, "get vmas for %s fail\n", pid);
+         return -1;
+@@ -2108,7 +2117,8 @@ static int fill_node_pair(void *obj, void *val)
+         return ret;
+     }
+ 
+-    for (pair = strtok_r(node_pair_str, pair_delim, &saveptr_pair); pair != NULL; pair = strtok_r(NULL, pair_delim, &saveptr_pair)) {
++    for (pair = strtok_r(node_pair_str, pair_delim, &saveptr_pair); pair != NULL;
++            pair = strtok_r(NULL, pair_delim, &saveptr_pair)) {
+         hot_node_str = strtok_r(pair, node_delim, &saveptr_node);
+         if (hot_node_str == NULL) {
+             etmemd_log(ETMEMD_LOG_ERR, "parse hot node failed\n");
+diff --git a/src/etmemd_src/etmemd_project.c b/src/etmemd_src/etmemd_project.c
+index 9ead14c..bd21819 100644
+--- a/src/etmemd_src/etmemd_project.c
++++ b/src/etmemd_src/etmemd_project.c
+@@ -132,7 +132,8 @@ static enum opt_result engine_of_group(GKeyFile *config, char *group_name, struc
+     return OPT_SUCCESS;
+ }
+ 
+-static enum opt_result task_of_group(GKeyFile *config, char *group_name, struct project *proj, struct engine *eng, struct task **tk)
++static enum opt_result task_of_group(GKeyFile *config, char *group_name,
++        struct project *proj, struct engine *eng, struct task **tk)
+ {
+     char *task_name = NULL;
+     char *key = NULL;
+@@ -155,7 +156,8 @@ static enum opt_result task_of_group(GKeyFile *config, char *group_name, struct
+     return OPT_SUCCESS;
+ }
+ 
+-static enum opt_result get_group_objs(GKeyFile *config, char *group_name, struct project **proj, struct engine **eng, struct task **tk)
++static enum opt_result get_group_objs(GKeyFile *config, char *group_name,
++        struct project **proj, struct engine **eng, struct task **tk)
+ {
+     enum opt_result ret;
+ 
+@@ -682,7 +684,8 @@ enum opt_result etmemd_migrate_stop(const char *project_name)
+     return OPT_SUCCESS;
+ }
+ 
+-enum opt_result etmemd_project_mgt_engine(const char *project_name, const char *eng_name, char *cmd, char *task_name, int sock_fd)
++enum opt_result etmemd_project_mgt_engine(const char *project_name, const char *eng_name, char *cmd, char *task_name,
++        int sock_fd)
+ {
+     struct engine *eng = NULL;
+     struct project *proj = NULL;
+diff --git a/src/etmemd_src/etmemd_rpc.c b/src/etmemd_src/etmemd_rpc.c
+index e154083..2e8e49d 100644
+--- a/src/etmemd_src/etmemd_rpc.c
++++ b/src/etmemd_src/etmemd_rpc.c
+@@ -121,7 +121,7 @@ static enum opt_result do_obj_cmd(GKeyFile *config, struct obj_cmd_item *items,
+     return OPT_SUCCESS;
+ }
+ 
+-struct obj_cmd_item obj_add_items[] = {
++struct obj_cmd_item g_obj_add_items[] = {
+     {PROJ_GROUP, etmemd_project_add},
+     {ENG_GROUP, etmemd_project_add_engine},
+     {TASK_GROUP, etmemd_project_add_task},
+@@ -129,7 +129,7 @@ struct obj_cmd_item obj_add_items[] = {
+ 
+ static enum opt_result do_obj_add(GKeyFile *config)
+ {
+-    return do_obj_cmd(config, obj_add_items, ARRAY_SIZE(obj_add_items));
++    return do_obj_cmd(config, g_obj_add_items, ARRAY_SIZE(g_obj_add_items));
+ }
+ 
+ static struct obj_cmd_item obj_remove_items[] = {
+diff --git a/src/etmemd_src/etmemd_slide.c b/src/etmemd_src/etmemd_slide.c
+index ea9ccb4..f7609f4 100644
+--- a/src/etmemd_src/etmemd_slide.c
++++ b/src/etmemd_src/etmemd_slide.c
+@@ -199,7 +199,7 @@ static void slide_stop_task(struct engine *eng, struct task *tk)
+     params->executor = NULL;
+ }
+ 
+-struct engine_ops slide_eng_ops = {
++struct engine_ops g_slide_eng_ops = {
+     .fill_eng_params = NULL,
+     .clear_eng_params = NULL,
+     .fill_task_params = slide_fill_task,
+@@ -213,7 +213,7 @@ struct engine_ops slide_eng_ops = {
+ 
+ int fill_engine_type_slide(struct engine *eng)
+ {
+-    eng->ops = &slide_eng_ops;
++    eng->ops = &g_slide_eng_ops;
+     eng->engine_type = SLIDE_ENGINE;
+     eng->name = "slide";
+     return 0;
+-- 
+2.27.0
+

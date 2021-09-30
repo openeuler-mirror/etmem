@@ -1,0 +1,41 @@
+From fd0ac585faf4f7893c728cb7898c265767f51082 Mon Sep 17 00:00:00 2001
+From: Kemeng Shi <shikemeng@huawei.com>
+Date: Thu, 29 Apr 2021 13:54:39 +0800
+Subject: [PATCH 15/50] limit mig_quota, hot_reserve to [0, INT_MAX]
+
+Signed-off-by: Kemeng Shi <shikemeng@huawei.com>
+---
+ src/etmemd_src/etmemd_cslide.c | 10 ++++++++++
+ 1 file changed, 10 insertions(+)
+
+diff --git a/src/etmemd_src/etmemd_cslide.c b/src/etmemd_src/etmemd_cslide.c
+index 7c30508..18a78d3 100644
+--- a/src/etmemd_src/etmemd_cslide.c
++++ b/src/etmemd_src/etmemd_cslide.c
+@@ -2048,6 +2048,11 @@ static int fill_hot_reserve(void *obj, void *val)
+     struct cslide_eng_params *params = (struct cslide_eng_params *)obj;
+     int hot_reserve = parse_to_int(val);
+ 
++    if (hot_reserve < 0) {
++        etmemd_log(ETMEMD_LOG_ERR, "config hot reserve %d not valid\n", hot_reserve);
++        return -1;
++    }
++
+     params->hot_reserve = hot_reserve;
+     return 0;
+ }
+@@ -2057,6 +2062,11 @@ static int fill_mig_quota(void *obj, void *val)
+     struct cslide_eng_params *params = (struct cslide_eng_params *)obj;
+     int mig_quota = parse_to_int(val);
+ 
++    if (mig_quota < 0) {
++        etmemd_log(ETMEMD_LOG_ERR, "config mig quota %d not valid\n", mig_quota);
++        return -1;
++    }
++
+     params->mig_quota = mig_quota;
+     return 0;
+ }
+-- 
+2.27.0
+
