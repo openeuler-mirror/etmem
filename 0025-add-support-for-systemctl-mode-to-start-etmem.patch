@@ -1,0 +1,243 @@
+From 7701548a6a1d131e642e74ef39a5a38093023b3f Mon Sep 17 00:00:00 2001
+From: louhongxiang <louhongxiang@huawei.com>
+Date: Mon, 10 May 2021 20:31:23 +0800
+Subject: [PATCH 25/50] add support for systemctl mode to start etmem
+
+---
+ inc/etmemd_inc/etmemd_common.h |  7 ++-
+ inc/etmemd_inc/etmemd_rpc.h    |  1 +
+ inc/etmemd_inc/etmemd_task.h   |  3 --
+ src/etmemd_src/etmemd_common.c |  7 ++-
+ src/etmemd_src/etmemd_rpc.c    | 80 ++++++++++++++++++++++++++++++++++
+ src/etmemd_src/etmemd_task.c   |  4 +-
+ 6 files changed, 95 insertions(+), 7 deletions(-)
+
+diff --git a/inc/etmemd_inc/etmemd_common.h b/inc/etmemd_inc/etmemd_common.h
+index 1b62bbd..e228476 100644
+--- a/inc/etmemd_inc/etmemd_common.h
++++ b/inc/etmemd_inc/etmemd_common.h
+@@ -23,10 +23,15 @@
+ #define FILE_LINE_MAX_LEN 1024
+ #define KEY_VALUE_MAX_LEN 64
+ #define DECIMAL_RADIX 10
+-#define ETMEMD_MAX_PARAMETER_NUM 5
++#define ETMEMD_MAX_PARAMETER_NUM 6
+ 
+ #define ARRAY_SIZE(array) (sizeof(array) / sizeof((array)[0]))
+ 
++/* in some system the max length of pid may be larger than 5, so we use 10 herr */
++#define PID_STR_MAX_LEN 10
++
++#define PIPE_FD_LEN 2
++
+ /*
+  * function: parse cmdline passed to etmemd server.
+  *
+diff --git a/inc/etmemd_inc/etmemd_rpc.h b/inc/etmemd_inc/etmemd_rpc.h
+index 146cec3..aa0a49b 100644
+--- a/inc/etmemd_inc/etmemd_rpc.h
++++ b/inc/etmemd_inc/etmemd_rpc.h
+@@ -55,5 +55,6 @@ int etmemd_parse_sock_name(const char *sock_name);
+ int etmemd_rpc_server(void);
+ bool etmemd_sock_name_set(void);
+ void etmemd_sock_name_free(void);
++int etmemd_deal_systemctl(void);
+ 
+ #endif
+diff --git a/inc/etmemd_inc/etmemd_task.h b/inc/etmemd_inc/etmemd_task.h
+index be3ade3..29e8e8f 100644
+--- a/inc/etmemd_inc/etmemd_task.h
++++ b/inc/etmemd_inc/etmemd_task.h
+@@ -23,9 +23,6 @@
+ #include "etmemd_threadtimer.h"
+ #include "etmemd_task_exp.h"
+ 
+-/* in some system the max length of pid may be larger than 5, so we use 10 here */
+-#define PID_STR_MAX_LEN 10
+-
+ struct task_pid {
+     unsigned int pid;
+     float rt_swapin_rate;   /* real time swapin rate */
+diff --git a/src/etmemd_src/etmemd_common.c b/src/etmemd_src/etmemd_common.c
+index 4b9c4cb..155a64b 100644
+--- a/src/etmemd_src/etmemd_common.c
++++ b/src/etmemd_src/etmemd_common.c
+@@ -37,6 +37,7 @@ static void usage(void)
+            "\noptions:\n"
+            "    -l|--log-level <log-level>  Log level\n"
+            "    -s|--socket <sockect name>  Socket name to listen to\n"
++           "    -m|--mode-systemctl         mode used to start(systemctl)\n"        
+            "    -h|--help                   Show this message\n");
+ }
+ 
+@@ -66,6 +67,9 @@ static int etmemd_parse_opts_valid(int opt, bool *is_help)
+             *is_help = true;
+             usage();
+             break;
++        case 'm':
++            ret = etmemd_deal_systemctl();
++            break;
+         case '?':
+             printf("error: parse parameters failed\n");
+             /* fallthrough */
+@@ -99,12 +103,13 @@ static int etmemd_parse_check_result(int params_cnt, int argc, const bool *is_he
+ 
+ int etmemd_parse_cmdline(int argc, char *argv[], bool *is_help)
+ {
+-    const char *op_str = "s:l:h";
++    const char *op_str = "s:l:mh";
+     int params_cnt = 0;
+     int opt, ret;
+     struct option long_options[] = {
+         {"socket", required_argument, NULL, 's'},
+         {"log-level", required_argument, NULL, 'l'},
++        {"mode-systemctl", no_argument, NULL, 'm'},
+         {"help", no_argument, NULL, 'h'},
+         {NULL, 0, NULL, 0},
+     };
+diff --git a/src/etmemd_src/etmemd_rpc.c b/src/etmemd_src/etmemd_rpc.c
+index 8360f5a..ba5971c 100644
+--- a/src/etmemd_src/etmemd_rpc.c
++++ b/src/etmemd_src/etmemd_rpc.c
+@@ -19,6 +19,9 @@
+ #include <sys/socket.h>
+ #include <signal.h>
+ #include <glib.h>
++#include <sys/types.h>
++#include <sys/stat.h>
++#include <fcntl.h>
+ #include "securec.h"
+ #include "etmemd_rpc.h"
+ #include "etmemd_project.h"
+@@ -35,6 +38,8 @@
+ static bool g_exit = true;
+ static char *g_sock_name = NULL;
+ static int g_sock_fd;
++static int g_fd[PIPE_FD_LEN];
++static int g_use_systemctl = 0;
+ struct server_rpc_params g_rpc_params;
+ 
+ struct rpc_resp_msg {
+@@ -67,6 +72,12 @@ struct rpc_resp_msg g_resp_msg_arr[] = {
+     {OPT_RET_END, NULL},
+ };
+ 
++int etmemd_deal_systemctl(void)
++{
++    g_use_systemctl = 1;
++    return 0;
++}
++
+ static void etmemd_set_flag(int s)
+ {
+     etmemd_log(ETMEMD_LOG_ERR, "caught signal %d\n", s);
+@@ -637,8 +648,69 @@ RPC_EXIT:
+     return ret;
+ }
+ 
++static int rpc_deal_parent(void)
++{
++    int len, handle, pid;
++    char pid_s[PID_STR_MAX_LEN];
++    int val = 0;
++
++    /* in systemctl mode, parent process need to write child pid */
++    if (socketpair(AF_UNIX, SOCK_STREAM, 0, g_fd) < 0) {
++        etmemd_log(ETMEMD_LOG_ERR, "Error initing pipefd\n");
++        return -1;
++    }
++
++    pid = fork();
++    if (pid != 0) {
++        if ((handle = open("/run/etmemd.pid", O_WRONLY | O_CREAT | O_TRUNC, S_IREAD | S_IWRITE)) == -1) {
++            etmemd_log(ETMEMD_LOG_ERR, "Error opening file\n");
++            exit(1);
++        }
++
++        if ((len = sprintf_s(pid_s, PID_STR_MAX_LEN, "%d", pid)) <= 0) {
++            etmemd_log(ETMEMD_LOG_ERR, "sprintf for pid failed\n");
++            exit(1);
++        }
++
++        if ((write(handle, pid_s, len)) != len) {
++            etmemd_log(ETMEMD_LOG_ERR, "Error writing to the file\n");
++            exit(1);
++        }
++
++        close(g_fd[1]);
++        if (read(g_fd[0], &val, sizeof(val)) <= 0) {
++            etmemd_log(ETMEMD_LOG_ERR, "Error reading to the file\n");
++            exit(1);
++        }
++
++        if (val == 1) {
++            exit(0);
++        }
++    }
++    return 0;
++}
++
++static int rpc_deal_child(void)
++{
++    int val = 1;
++    close(g_fd[0]);
++    if (write(g_fd[1], &val, sizeof(val)) <= 0) {
++        etmemd_log(ETMEMD_LOG_ERR, "Error writing pipe fd\n");
++        return -1;
++    }
++    close(g_fd[1]);
++    return 0;
++}
++
+ int etmemd_rpc_server(void)
+ {
++    /* in systemctl mode, parent process need to write child pid */
++    if (g_use_systemctl) {
++        if (rpc_deal_parent() != 0) {
++            etmemd_log(ETMEMD_LOG_ERR, "Error deal by parent process\n");
++            return -1;
++        }
++    }
+     if (!etmemd_sock_name_set()) {
+         etmemd_log(ETMEMD_LOG_ERR, "socket name of rpc must be provided\n");
+         return -1;
+@@ -661,6 +733,14 @@ int etmemd_rpc_server(void)
+         return -1;
+     }
+ 
++    /* in systemctl mode, child process need to notify parent to exit  */
++    if (g_use_systemctl) {
++        if (rpc_deal_child() != 0) {
++            etmemd_log(ETMEMD_LOG_ERR, "Error sending message to parent process\n");
++            return -1;
++        }
++    }
++
+     while (!g_exit) {
+         if (etmemd_rpc_accept(g_sock_fd) != 0) {
+             etmemd_log(ETMEMD_LOG_ERR, "handle remote call failed once, error(%s)\n",
+diff --git a/src/etmemd_src/etmemd_task.c b/src/etmemd_src/etmemd_task.c
+index b948c63..01491f7 100644
+--- a/src/etmemd_src/etmemd_task.c
++++ b/src/etmemd_src/etmemd_task.c
+@@ -205,7 +205,7 @@ static int get_pid_from_type_name(char *val, char *pid)
+     char *arg_pid[] = {"/usr/bin/pgrep", "-x", val, NULL};
+     FILE *file = NULL;
+     int ret = -1;
+-    int pipefd[2]; /* used for pipefd[2] communication to obtain the task PID */
++    int pipefd[PIPE_FD_LEN]; /* used for pipefd[PIPE_FD_LEN] communication to obtain the task PID */
+ 
+     if (pipe(pipefd) == -1) {
+         return -1;
+@@ -269,7 +269,7 @@ static int fill_task_child_pid(struct task *tk, char *pid)
+     char *arg_pid[] = {"/usr/bin/pgrep", "-P", pid, NULL};
+     FILE *file = NULL;
+     int ret;
+-    int pipefd[2]; /* used for pipefd[2] communication to obtain the task PID */
++    int pipefd[PIPE_FD_LEN]; /* used for pipefd[PIPE_FD_LEN] communication to obtain the task PID */
+ 
+     if (pipe(pipefd) == -1) {
+         return -1;
+-- 
+2.27.0
+

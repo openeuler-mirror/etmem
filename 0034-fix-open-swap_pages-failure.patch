@@ -1,0 +1,48 @@
+From bcbd8d433b5a0e64d202a781599a691183388024 Mon Sep 17 00:00:00 2001
+From: Kemeng Shi <shikemeng@huawei.com>
+Date: Sun, 16 May 2021 16:46:45 +0800
+Subject: [PATCH 34/50] fix open swap_pages failure
+
+Signed-off-by: Kemeng Shi <shikemeng@huawei.com>
+---
+ src/etmemd_src/etmemd_common.c | 17 +++++++++++++----
+ 1 file changed, 13 insertions(+), 4 deletions(-)
+
+diff --git a/src/etmemd_src/etmemd_common.c b/src/etmemd_src/etmemd_common.c
+index 07c9e7a..29aa52a 100644
+--- a/src/etmemd_src/etmemd_common.c
++++ b/src/etmemd_src/etmemd_common.c
+@@ -239,17 +239,26 @@ FILE *etmemd_get_proc_file(const char *pid, const char *file, int flags, const c
+         return NULL;
+     }
+ 
+-    fd = open(file_name, 0);
+-    if (fd < 0) {
++    fp = fopen(file_name, mode);
++    if (fp == NULL) {
+         etmemd_log(ETMEMD_LOG_ERR, "open file %s fail\n", file_name);
+         goto free_file_name;
+     }
++
++    fd = fileno(fp);
++    if (fd < 0) {
++        etmemd_log(ETMEMD_LOG_ERR, "get fd of file %s fail\n", file_name);
++        fclose(fp);
++        fp = NULL;
++        goto free_file_name;
++    }
++
+     if (flags != 0 && ioctl(fd, IDLE_SCAN_ADD_FLAGS, &flags) != 0) {
+         etmemd_log(ETMEMD_LOG_ERR, "set idle flags for %s fail with %s\n", pid, strerror(errno));
+-        close(fd);
++        fclose(fp);
++        fp = NULL;
+         goto free_file_name;
+     }
+-    fp = fdopen(fd, mode);
+ 
+ free_file_name:
+     free(file_name);
+-- 
+2.27.0
+

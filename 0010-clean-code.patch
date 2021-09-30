@@ -1,0 +1,334 @@
+From 146be685ec749239979023358a653ef960652f6c Mon Sep 17 00:00:00 2001
+From: Kemeng Shi <shikemeng@huawei.com>
+Date: Wed, 28 Apr 2021 19:19:30 +0800
+Subject: [PATCH 10/50] clean code
+
+Signed-off-by: Kemeng Shi <shikemeng@huawei.com>
+---
+ inc/etmem_inc/etmem_common.h    |  2 -
+ src/etmem_src/etmem.c           |  2 +-
+ src/etmem_src/etmem_common.c    | 73 ---------------------------------
+ src/etmem_src/etmem_engine.c    | 18 +++++---
+ src/etmem_src/etmem_obj.c       | 46 ++-------------------
+ src/etmem_src/etmem_project.c   | 22 +++-------
+ src/etmem_src/etmem_rpc.c       |  2 +-
+ src/etmemd_src/etmemd_project.c |  6 ++-
+ 8 files changed, 30 insertions(+), 141 deletions(-)
+
+diff --git a/inc/etmem_inc/etmem_common.h b/inc/etmem_inc/etmem_common.h
+index 294d216..09f6e1a 100644
+--- a/inc/etmem_inc/etmem_common.h
++++ b/inc/etmem_inc/etmem_common.h
+@@ -36,8 +36,6 @@ struct mem_proj {
+     char *eng_cmd;
+ };
+ 
+-int parse_name_string(const char *val, char **name_str, size_t max_len);
+ int etmem_parse_check_result(int params_cnt, int argc);
+-void free_proj_member(struct mem_proj *proj);
+ 
+ #endif
+diff --git a/src/etmem_src/etmem.c b/src/etmem_src/etmem.c
+index 863f91b..7f04ad1 100644
+--- a/src/etmem_src/etmem.c
++++ b/src/etmem_src/etmem.c
+@@ -34,7 +34,7 @@ static void usage(void)
+             "    etmem OBJECT COMMAND\n"
+             "    etmem help\n"
+             "\nParameters:\n"
+-            "    OBJECT  := { project | migrate }\n"
++            "    OBJECT  := { project | obj }\n"
+             "    COMMAND := { add | del | start | stop | show | help }\n");
+ }
+ 
+diff --git a/src/etmem_src/etmem_common.c b/src/etmem_src/etmem_common.c
+index 8d0cee3..66fbfc9 100644
+--- a/src/etmem_src/etmem_common.c
++++ b/src/etmem_src/etmem_common.c
+@@ -20,43 +20,6 @@
+ #include "securec.h"
+ #include "etmem_common.h"
+ 
+-int parse_name_string(const char *val, char **name_str, size_t max_len)
+-{
+-    size_t len;
+-    int ret;
+-
+-    if (val == NULL) {
+-        printf("name string should not be NULL\n");
+-        return -EINVAL;
+-    }
+-                
+-    len = strlen(val) + 1;
+-    if (len == 1) {
+-        printf("name string should not be empty\n");
+-        return -EINVAL;
+-    }
+-    if (len > max_len) {
+-        printf("string is too long, it should not be larger than %zu\n", max_len);
+-        return -ENAMETOOLONG;
+-    }
+-
+-    *name_str = (char *)calloc(len, sizeof(char));
+-    if (*name_str == NULL) {
+-        printf("malloc project name failed.\n");
+-        return -ENOMEM;
+-    }
+-
+-    ret = strncpy_s(*name_str, len, val, len - 1);
+-    if (ret != EOK) {
+-        printf("strncpy_s project name failed.\n");
+-        free(*name_str);
+-        *name_str = NULL;
+-        return ret;
+-    }
+-
+-    return 0;
+-}
+-
+ int etmem_parse_check_result(int params_cnt, int argc)
+ {
+     if (params_cnt > 0 && argc - 1 > params_cnt * 2) {  /* maximum number of args is limited to params_cnt * 2+1 */
+@@ -66,39 +29,3 @@ int etmem_parse_check_result(int params_cnt, int argc)
+ 
+     return 0;
+ }
+-
+-void free_proj_member(struct mem_proj *proj)
+-{
+-    if (proj->proj_name != NULL) {
+-        free(proj->proj_name);
+-        proj->proj_name = NULL;
+-    }
+-
+-    if (proj->file_name != NULL) {
+-        free(proj->file_name);
+-        proj->file_name = NULL;
+-    }
+-
+-    if (proj->sock_name != NULL) {
+-        free(proj->sock_name);
+-        proj->sock_name = NULL;
+-    }
+-
+-    if (proj->eng_name != NULL) {
+-        free(proj->eng_name);
+-        proj->eng_name = NULL;
+-    }
+-
+-    if (proj->task_name != NULL) {
+-        free(proj->task_name);
+-        proj->task_name = NULL;
+-    }
+-
+-    if (proj->eng_cmd != NULL) {
+-        free(proj->eng_cmd);
+-        proj->eng_cmd = NULL;
+-    }
+-
+-}
+-
+-
+diff --git a/src/etmem_src/etmem_engine.c b/src/etmem_src/etmem_engine.c
+index 7673205..e744aaa 100644
+--- a/src/etmem_src/etmem_engine.c
++++ b/src/etmem_src/etmem_engine.c
+@@ -23,15 +23,23 @@
+ 
+ static void engine_help(void)
+ {
+-    printf("etmem engine help information\n");
++    printf("\nUsage:\n"
++            "    memig engine eng_cmd [options]\n"
++            "    memig engine help\n"
++            "\nOptions:\n"
++            "    -n|--proj_name <proj_name> project engine belongs to\n"
++            "    -s|--socket <socket_name> socket name to connect\n"
++            "    -e|--engine <engine_name> engine to execute cmd\n"
++            "    -t|--task_name <task_name> task for cmd\n"
++            "\nNotes:\n"
++            "    1. project name must be given.\n"
++            "    2. socket name must be given.\n"
++            "    3. engine name must be given.\n"
++            "    4. engine cmd must be given.\n");
+ }
+ 
+ static int engine_parse_cmd(struct etmem_conf *conf, struct mem_proj *proj)
+ {
+-    if (conf->argc == 0) {
+-        printf("too few params for etmem client engine command\n");
+-        return -1;
+-    }
+     proj->eng_cmd = conf->argv[0];
+     proj->cmd = ETMEM_CMD_ENGINE;
+     return 0;
+diff --git a/src/etmem_src/etmem_obj.c b/src/etmem_src/etmem_obj.c
+index a3f66fe..a5517ea 100644
+--- a/src/etmem_src/etmem_obj.c
++++ b/src/etmem_src/etmem_obj.c
+@@ -61,34 +61,6 @@ static int obj_parse_cmd(struct etmem_conf *conf, struct mem_proj *proj)
+     return -1;
+ }
+ 
+-static int parse_file_name(const char *val, char **file_name)
+-{
+-    size_t len;
+-    int ret;
+-
+-    len = strlen(val) + 1;
+-    if (len > FILE_NAME_MAX_LEN) {
+-        printf("file name is too long, should not be larger than %u\n", FILE_NAME_MAX_LEN);
+-        return -ENAMETOOLONG;
+-    }
+-
+-    *file_name = (char *)calloc(len, sizeof(char));
+-    if (*file_name == NULL) {
+-        printf("malloc file name failed\n");
+-        return -ENOMEM;
+-    }
+-
+-    ret = strncpy_s(*file_name, len, val, len - 1);
+-    if (ret != EOK) {
+-        printf("strncpy_s file name fail\n");
+-        free(*file_name);
+-        *file_name = NULL;
+-        return ret;
+-    }
+-
+-    return 0;
+-}
+-
+ static int obj_parse_args(struct etmem_conf *conf, struct mem_proj *proj)
+ {
+     int opt, ret;
+@@ -102,18 +74,10 @@ static int obj_parse_args(struct etmem_conf *conf, struct mem_proj *proj)
+     while ((opt = getopt_long(conf->argc, conf->argv, "f:s:", opts, NULL)) != -1) {
+         switch (opt) {
+             case 'f':
+-                ret = parse_file_name(optarg, &proj->file_name);
+-                if (ret != 0) {
+-                    printf("parse file name failed\n");
+-                    return ret;
+-                }
++                proj->file_name = optarg;
+                 break;
+             case 's':
+-                ret = parse_name_string(optarg, &proj->sock_name, SOCKET_NAME_MAX_LEN);
+-                if (ret != 0) {
+-                    printf("parse socket name failed.\n");
+-                    return ret;
+-                }
++                proj->sock_name = optarg;
+                 break;
+             case '?':
+                 /* fallthrough */
+@@ -164,19 +128,17 @@ static int obj_do_cmd(struct etmem_conf *conf)
+     ret = obj_parse_args(conf, &proj);
+     if (ret != 0) {
+         printf("obj_parse_args fail\n");
+-        goto EXIT;
++        return ret;
+     }
+ 
+     ret = obj_check_params(&proj);
+     if (ret != 0) {
+         printf("obj_check_params fail\n");
+-        goto EXIT;
++        return ret;
+     }
+ 
+     ret = etmem_rpc_client(&proj);
+ 
+-EXIT:
+-    free_proj_member(&proj);
+     return ret;
+ }
+ 
+diff --git a/src/etmem_src/etmem_project.c b/src/etmem_src/etmem_project.c
+index 790979e..bb53df3 100644
+--- a/src/etmem_src/etmem_project.c
++++ b/src/etmem_src/etmem_project.c
+@@ -78,22 +78,14 @@ static int project_parse_args(const struct etmem_conf *conf, struct mem_proj *pr
+         {NULL, 0, NULL, 0},
+     };
+ 
+-    while ((opt = getopt_long(conf->argc, conf->argv, "f:n:s:",
++    while ((opt = getopt_long(conf->argc, conf->argv, "n:s:",
+                               opts, NULL)) != -1) {
+         switch (opt) {
+             case 'n':
+-                ret = parse_name_string(optarg, &proj->proj_name, PROJECT_NAME_MAX_LEN);
+-                if (ret != 0) {
+-                    printf("parse project name failed.\n");
+-                    return ret;
+-                }
++                proj->proj_name = optarg;
+                 break;
+             case 's':
+-                ret = parse_name_string(optarg, &proj->sock_name, SOCKET_NAME_MAX_LEN);
+-                if (ret != 0) {
+-                    printf("parse socket name failed.\n");
+-                    return ret;
+-                }
++                proj->sock_name = optarg;
+                 break;
+             case '?':
+                 /* fallthrough */
+@@ -148,18 +140,16 @@ static int project_do_cmd(struct etmem_conf *conf)
+ 
+     ret = project_parse_args(conf, &proj);
+     if (ret != 0) {
+-        goto EXIT;
++        return ret;
+     }
+ 
+     ret = project_check_params(&proj);
+     if (ret != 0) {
+-        goto EXIT;
++        return ret;
+     }
+ 
+-    etmem_rpc_client(&proj);
++    ret = etmem_rpc_client(&proj);
+ 
+-EXIT:
+-    free_proj_member(&proj);
+     return ret;
+ }
+ 
+diff --git a/src/etmem_src/etmem_rpc.c b/src/etmem_src/etmem_rpc.c
+index 8d03914..76fadb8 100644
+--- a/src/etmem_src/etmem_rpc.c
++++ b/src/etmem_src/etmem_rpc.c
+@@ -134,7 +134,7 @@ static int etmem_client_send(const struct mem_proj *proj, int sockfd)
+     }
+ 
+     if (send(sockfd, reg_cmd, reg_cmd_len, 0) < 0) {
+-        perror("send failed:"); 
++        perror("send failed:");
+         goto EXIT;
+     }
+     ret = 0;
+diff --git a/src/etmemd_src/etmemd_project.c b/src/etmemd_src/etmemd_project.c
+index bd21819..b3158d8 100644
+--- a/src/etmemd_src/etmemd_project.c
++++ b/src/etmemd_src/etmemd_project.c
+@@ -709,10 +709,14 @@ enum opt_result etmemd_project_mgt_engine(const char *project_name, const char *
+     eng = get_eng_by_name(proj, eng_name);
+     if (eng == NULL) {
+         etmemd_log(ETMEMD_LOG_ERR, "engine %s is not existed\n", eng_name);
+-        return OPT_INVAL;
++        return OPT_ENG_NOEXIST;
+     }
+     if (task_name != NULL) {
+         tk = get_task_by_name(proj, eng, task_name);
++        if (tk == NULL) {
++            etmemd_log(ETMEMD_LOG_ERR, "task %s not found\n", task_name);
++            return OPT_TASK_NOEXIST;
++        }
+     }
+     if (eng->ops->eng_mgt_func(eng, tk, cmd, sock_fd) != 0) {
+         return OPT_INVAL;
+-- 
+2.27.0
+
