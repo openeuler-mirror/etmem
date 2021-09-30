@@ -2,7 +2,7 @@
 
 Name:	       etmem
 Version:       1.0
-Release:       6
+Release:       7
 Summary:       etmem 
 License:       Mulan PSL v2
 Source0:       etmem-%{version}.tar.gz
@@ -55,11 +55,13 @@ Patch44: 0045-add-dram_percent-to-etmem.patch
 Patch45: 0046-Fix-memory-leak-in-slide-engine.patch
 Patch46: 0047-move-all-the-files-to-sub-directory-of-etmem.patch
 Patch47: 0048-Commit-new-features-memRouter-and-userswap-to-etmem.patch
+Patch48: 0049-Add-engine-memdcd-to-etmemd.patch
+Patch49: 0050-Add-CMakeLists.txt-for-three-features-of-etmem.patch
 
 #Dependency
 BuildRequires: cmake gcc gcc-c++
-BuildRequires: libboundscheck
-Requires: libboundscheck
+BuildRequires: libboundscheck numactl-devel libcap-devel json-c-devel
+Requires: libboundscheck json-c libcap numactl
 
 %description
 etmem module
@@ -76,23 +78,34 @@ make
 
 %install
 mkdir -p $RPM_BUILD_ROOT%{_bindir}
+mkdir -p $RPM_BUILD_ROOT%{_libdir}
+mkdir -p $RPM_BUILD_ROOT%{_includedir}
 install -d $RPM_BUILD_ROOT%{_sysconfdir}/etmem/
 
-install -m 0500 build/bin/etmem $RPM_BUILD_ROOT%{_bindir}
-install -m 0500 build/bin/etmemd $RPM_BUILD_ROOT%{_bindir}
-install -m 0600 conf/example_conf.yaml $RPM_BUILD_ROOT%{_sysconfdir}/etmem/
+install -m 0500 etmem/build/bin/etmem $RPM_BUILD_ROOT%{_bindir}
+install -m 0500 etmem/build/bin/etmemd $RPM_BUILD_ROOT%{_bindir}
+install -m 0600 etmem/conf/example_conf.yaml $RPM_BUILD_ROOT%{_sysconfdir}/etmem/
 
+install -m 0550 build/memRouter/memdcd $RPM_BUILD_ROOT%{_bindir}
+install -m 0550 build/userswap/libuswap.a $RPM_BUILD_ROOT%{_libdir}
+install -m 0644 userswap/include/uswap_api.h $RPM_BUILD_ROOT%{_includedir}
 %files
 %defattr(-,root,root,0750)
 %{_bindir}/etmem
 %{_bindir}/etmemd
 %dir %{_sysconfdir}/etmem
 %{_sysconfdir}/etmem/example_conf.yaml
+%{_bindir}/memdcd
+%{_libdir}/libuswap.a
+%{_includedir}/uswap_api.h
 
 %post -p /sbin/ldconfig
 %postun -p /sbin/ldconfig
 
 %changelog
+* Thu Oct 30 2021 yangxin <245051644@qq.com> 1.0-7
+- Update etmem and add new features memRouter and userswap.=
+
 * Mon Aug 1 2021 louhongxiang <louhongxiang@huawei.com> 1.0-6
 - cancel write permission of root.
 
