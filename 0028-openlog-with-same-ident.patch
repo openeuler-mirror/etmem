@@ -1,0 +1,41 @@
+From 4c33e102cd7745a4b2c2186414e0f2338e763916 Mon Sep 17 00:00:00 2001
+From: Kemeng Shi <shikemeng@huawei.com>
+Date: Tue, 11 May 2021 16:09:26 +0800
+Subject: [PATCH 28/50] openlog with same ident
+
+Signed-off-by: Kemeng Shi <shikemeng@huawei.com>
+---
+ src/etmemd_src/etmemd_log.c | 8 ++++----
+ 1 file changed, 4 insertions(+), 4 deletions(-)
+
+diff --git a/src/etmemd_src/etmemd_log.c b/src/etmemd_src/etmemd_log.c
+index fc49db8..5d7dece 100644
+--- a/src/etmemd_src/etmemd_log.c
++++ b/src/etmemd_src/etmemd_log.c
+@@ -58,19 +58,19 @@ void etmemd_log(enum log_level log_level, const char *format, ...)
+ 
+     switch (log_level) {
+         case ETMEMD_LOG_DEBUG:
+-            openlog("[etmemd_debug] ", LOG_PID, LOG_USER);
++            openlog("[etmemd] ", LOG_PID, LOG_USER);
+             vsyslog(LOG_DEBUG, format, args_in);
+             break;
+         case ETMEMD_LOG_INFO:
+-            openlog("[etmemd_info] ", LOG_PID, LOG_USER);
++            openlog("[etmemd] ", LOG_PID, LOG_USER);
+             vsyslog(LOG_INFO, format, args_in);
+             break;
+         case ETMEMD_LOG_WARN:
+-            openlog("[etmemd_warning] ", LOG_PID, LOG_USER);
++            openlog("[etmemd] ", LOG_PID, LOG_USER);
+             vsyslog(LOG_WARNING, format, args_in);
+             break;
+         case ETMEMD_LOG_ERR:
+-            openlog("[etmemd_error] ", LOG_PID, LOG_USER);
++            openlog("[etmemd] ", LOG_PID, LOG_USER);
+             vsyslog(LOG_ERR, format, args_in);
+             break;
+         default:
+-- 
+2.27.0
+
