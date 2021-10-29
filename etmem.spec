@@ -2,10 +2,11 @@
 
 Name:	       etmem
 Version:       1.0
-Release:       8
+Release:       9
 Summary:       etmem 
 License:       Mulan PSL v2
-Source0:       etmem-%{version}.tar.gz
+URL:           https://gitee.com/openeuler/etmem
+Source0:       https://gitee.com/openeuler/etmem/repository/archive/%{version}.tar.gz
 
 Patch0: 0001-fix-64K-pagesize-scan-problem.patch
 Patch1: 0002-change-aarch64-march-to-armv8-a.patch
@@ -104,6 +105,9 @@ install -m 0644 userswap/include/uswap_api.h $RPM_BUILD_ROOT%{_includedir}
 %postun -p /sbin/ldconfig
 
 %changelog
+* Fri Oct 29 2021 liubo <liubo254@huawei.com> 1.0-9
+- Add missing URL and source to etmem.spec
+
 * Thu Oct 20 2021 shikemeng <shikemeng@huawei.com> 1.0-8
 - Add missing Requires
 - Remove write permssion in %file after strip

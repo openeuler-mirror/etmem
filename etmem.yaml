@@ -1,0 +1,4 @@
+version_control: gitee
+src_repo: openEuler/etmem
+tag_prefix: ""
+seperator: .
