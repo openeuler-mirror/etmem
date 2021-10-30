@@ -16,7 +16,7 @@ etmem内存分级扩展技术，通过DRAM+内存压缩/高性能存储新介质
 
     a) 下载代码包手动编译
 
-    $ tar -xf etmem-1.0.tar.gz
+    $ tar -xf 1.0.tar.gz
 
     $ cd etmem-1.0
 
