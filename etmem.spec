@@ -2,7 +2,7 @@
 
 Name:	       etmem
 Version:       1.0
-Release:       9
+Release:       10
 Summary:       etmem 
 License:       Mulan PSL v2
 URL:           https://gitee.com/openeuler/etmem
@@ -58,6 +58,7 @@ Patch46: 0047-move-all-the-files-to-sub-directory-of-etmem.patch
 Patch47: 0048-Commit-new-features-memRouter-and-userswap-to-etmem.patch
 Patch48: 0049-Add-engine-memdcd-to-etmemd.patch
 Patch49: 0050-Add-CMakeLists.txt-for-three-features-of-etmem.patch
+Patch50: 0051-update-memdcd-engine-for-userswap.patch
 
 #Dependency
 BuildRequires: cmake gcc gcc-c++ glib2-devel
@@ -105,6 +106,9 @@ install -m 0644 userswap/include/uswap_api.h $RPM_BUILD_ROOT%{_includedir}
 %postun -p /sbin/ldconfig
 
 %changelog
+* Fri Dec 15 2021 YangXin <245051644@qq.com> 1.0-10
+- Update memdcd engine for userswap page filter.
+
 * Fri Oct 29 2021 liubo <liubo254@huawei.com> 1.0-9
 - Add missing URL and source to etmem.spec
 
