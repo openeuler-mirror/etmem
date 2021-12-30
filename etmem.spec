@@ -2,13 +2,16 @@
 
 Name:	       etmem
 Version:       1.0
-Release:       6
+Release:       7
 Summary:       etmem 
 License:       Mulan PSL v2
 Source0:       etmem-%{version}.tar.gz
 
 Patch0: 0001-fix-64K-pagesize-scan-problem.patch
 Patch1: 0002-change-aarch64-march-to-armv8-a.patch
+%ifarch riscv64
+Patch2: 0003-add-riscv64-to-CMakeLists.patch
+%endif
 #Dependency
 BuildRequires: cmake gcc gcc-c++
 BuildRequires: libboundscheck
@@ -46,6 +49,9 @@ install -m 0600 conf/example_conf.yaml $RPM_BUILD_ROOT%{_sysconfdir}/etmem/
 %postun -p /sbin/ldconfig
 
 %changelog
+* Thu Dec 30 2021 wujie <wujie@nj.iscas.ac.cn> 1.0-7
+- add riscv64 to CMakeLists.
+
 * Mon Aug 1 2021 louhongxiang <louhongxiang@huawei.com> 1.0-6
 - cancel write permission of root.
 

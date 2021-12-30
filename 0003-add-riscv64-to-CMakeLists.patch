@@ -1,0 +1,22 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index a4a83ca..90f4f56 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -72,6 +72,8 @@ target_link_libraries(etmemd PRIVATE pthread dl rt boundscheck)
+ 
+ if( ${ARCHITECTURE} STREQUAL "aarch64" )
+  target_compile_options(etmemd PRIVATE -march=armv8-a)
++elseif( ${ARCHITECTURE} STREQUAL "riscv64" )
++ target_compile_options(etmemd PRIVATE -march=rv64gc)
+ else()
+  target_compile_options(etmemd PRIVATE -march=core-avx-i -m64)
+ endif()
+@@ -87,6 +89,8 @@ target_link_libraries(etmem PRIVATE pthread dl rt boundscheck)
+ 
+ if( ${ARCHITECTURE} STREQUAL "aarch64" )
+  target_compile_options(etmem PRIVATE -march=armv8-a)
++elseif( ${ARCHITECTURE} STREQUAL "riscv64" )
++ target_compile_options(etmemd PRIVATE -march=rv64gc)
+ else()
+  target_compile_options(etmem PRIVATE -march=core-avx-i -m64)
+ endif()
