@@ -1,0 +1,26 @@
+From 8a66153b5d2094fae65e08418ac3752d868175dc Mon Sep 17 00:00:00 2001
+From: Kemeng Shi <shikemeng@huawei.com>
+Date: Mon, 24 May 2021 20:08:38 +0800
+Subject: [PATCH 36/50] check if start_task is NULL before call it
+
+Signed-off-by: Kemeng Shi <shikemeng@huawei.com>
+---
+ src/etmemd_src/etmemd_project.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/src/etmemd_src/etmemd_project.c b/src/etmemd_src/etmemd_project.c
+index 3b12296..2e69dd6 100644
+--- a/src/etmemd_src/etmemd_project.c
++++ b/src/etmemd_src/etmemd_project.c
+@@ -279,7 +279,7 @@ enum opt_result etmemd_project_add_task(GKeyFile *config)
+         goto remove_task;
+     }
+ 
+-    if (proj->start && eng->ops->start_task(eng, tk) != 0) {
++    if (proj->start && eng->ops->start_task != NULL && eng->ops->start_task(eng, tk) != 0) {
+         etmemd_log(ETMEMD_LOG_ERR, "start added task %s fail\n", tk->name);
+         goto clear_task;
+     }
+-- 
+2.27.0
+

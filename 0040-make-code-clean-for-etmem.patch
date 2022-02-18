@@ -1,0 +1,302 @@
+From 01e8f7ea6c15c12991026a1838ca0573bbf9b910 Mon Sep 17 00:00:00 2001
+From: HukunaMatata <yuxiangyang4@huawei.com>
+Date: Wed, 26 May 2021 09:45:27 +0800
+Subject: [PATCH 40/50] make code clean for etmem.
+
+---
+ inc/etmemd_inc/etmemd_common.h     |  9 ------
+ inc/etmemd_inc/etmemd_task_exp.h   |  2 +-
+ src/etmem_src/etmem.c              |  2 --
+ src/etmem_src/etmem_engine.c       | 10 ++-----
+ src/etmemd_src/etmemd_common.c     | 44 ------------------------------
+ src/etmemd_src/etmemd_cslide.c     | 28 ++++++++++++-------
+ src/etmemd_src/etmemd_rpc.c        |  9 ++++++
+ src/etmemd_src/etmemd_scan.c       |  1 -
+ src/etmemd_src/etmemd_thirdparty.c |  7 +++++
+ 9 files changed, 38 insertions(+), 74 deletions(-)
+
+diff --git a/inc/etmemd_inc/etmemd_common.h b/inc/etmemd_inc/etmemd_common.h
+index e228476..4127ccf 100644
+--- a/inc/etmemd_inc/etmemd_common.h
++++ b/inc/etmemd_inc/etmemd_common.h
+@@ -54,15 +54,6 @@ FILE *etmemd_get_proc_file(const char *pid, const char *file, int flags, const c
+ 
+ int get_keyword_and_value(const char *str, char *key, char *val);
+ 
+-/* function: get the line which has effective content only from the file
+- *
+- * in:       FILE *file     - the file to read
+- *
+- * out:      char *         - the string with effective content
+- *           NULL           - end of file.
+- * */
+-char *skip_blank_line(FILE *file);
+-
+ int dprintf_all(int fd, const char *format, ...);
+ 
+ #endif
+diff --git a/inc/etmemd_inc/etmemd_task_exp.h b/inc/etmemd_inc/etmemd_task_exp.h
+index b62f382..33d505a 100644
+--- a/inc/etmemd_inc/etmemd_task_exp.h
++++ b/inc/etmemd_inc/etmemd_task_exp.h
+@@ -28,7 +28,7 @@ struct task {
+     char *type;
+     char *value;
+     char *name;
+-    uint64_t max_threads;
++    int max_threads;
+ 
+     struct task_pid *pids;
+     struct engine *eng;
+diff --git a/src/etmem_src/etmem.c b/src/etmem_src/etmem.c
+index 76ea8d2..f243a75 100644
+--- a/src/etmem_src/etmem.c
++++ b/src/etmem_src/etmem.c
+@@ -23,8 +23,6 @@
+ #include "etmem_project.h"
+ #include "etmem_engine.h"
+ 
+-#define CMD_POSITION 1
+-
+ SLIST_HEAD(etmem_obj_list, etmem_obj) g_etmem_objs;
+ 
+ static void usage(void)
+diff --git a/src/etmem_src/etmem_engine.c b/src/etmem_src/etmem_engine.c
+index bafcfe6..675c38f 100644
+--- a/src/etmem_src/etmem_engine.c
++++ b/src/etmem_src/etmem_engine.c
+@@ -39,11 +39,11 @@ static void engine_help(void)
+             "    5. eng_cmd is supported by engine own.\n");
+ }
+ 
+-static int engine_parse_cmd(struct etmem_conf *conf, struct mem_proj *proj)
++static void engine_parse_cmd(struct etmem_conf *conf, struct mem_proj *proj)
+ {
+     proj->eng_cmd = conf->argv[0];
+     proj->cmd = ETMEM_CMD_ENGINE;
+-    return 0;
++    return;
+ }
+ 
+ static int engine_parse_args(struct etmem_conf *conf, struct mem_proj *proj)
+@@ -126,11 +126,7 @@ static int engine_do_cmd(struct etmem_conf *conf)
+         return ret;
+     }
+ 
+-    ret = engine_parse_cmd(conf, &proj);
+-    if (ret != 0) {
+-        printf("engine_parse_cmd fail\n");
+-        return -1;
+-    }
++    engine_parse_cmd(conf, &proj);
+ 
+     ret = engine_parse_args(conf, &proj);
+     if (ret != 0) {
+diff --git a/src/etmemd_src/etmemd_common.c b/src/etmemd_src/etmemd_common.c
+index 29aa52a..8aad0eb 100644
+--- a/src/etmemd_src/etmemd_common.c
++++ b/src/etmemd_src/etmemd_common.c
+@@ -34,7 +34,6 @@
+ 
+ #define IDLE_SCAN_MAGIC         0x66
+ #define IDLE_SCAN_ADD_FLAGS     _IOW(IDLE_SCAN_MAGIC, 0x0, unsigned int)
+-#define IDLE_SCAN_REMOVE_FLAGS  _IOW(IDLE_SCAN_MAGIC, 0x1, unsigned int)
+ 
+ static void usage(void)
+ {
+@@ -360,49 +359,6 @@ int get_keyword_and_value(const char *str, char *key, char *val)
+     return 0;
+ }
+ 
+-static char *skip_colon_space_and_blank_line(char *str)
+-{
+-    size_t len;
+-
+-    len = strlen(str);
+-    while (len-- > 0) {
+-        if (is_valid_char_for_value(" :\n\t", str[len])) {
+-            str[len] = '\0';
+-            continue;
+-        }
+-
+-        break;
+-    }
+-
+-    if (strlen(str) == 0) {
+-        return "";
+-    }
+-
+-    while (is_valid_char_for_value(" \t", *str)) {
+-        str++;
+-    }
+-
+-    return str;
+-}
+-
+-char *skip_blank_line(FILE *file)
+-{
+-    static char line[FILE_LINE_MAX_LEN] = {};
+-    char *get_line = NULL;
+-
+-    while (fgets(line, FILE_LINE_MAX_LEN, file) != NULL) {
+-        get_line = skip_colon_space_and_blank_line(line);
+-        if (strcmp(get_line, "") != 0) {
+-            break;
+-        }
+-        /* in case the last line is an empty line,
+-         * make the get_line equals to NULL before next loop begins */
+-        get_line = NULL;
+-    }
+-
+-    return get_line;
+-}
+-
+ static int write_all(int fd, const char *buf)
+ {
+     ssize_t rest = strlen(buf);
+diff --git a/src/etmemd_src/etmemd_cslide.c b/src/etmemd_src/etmemd_cslide.c
+index 745dbcc..a77b7bb 100644
+--- a/src/etmemd_src/etmemd_cslide.c
++++ b/src/etmemd_src/etmemd_cslide.c
+@@ -33,15 +33,10 @@
+ 
+ #define HUGE_1M_SIZE    (1 << 20)
+ #define HUGE_2M_SIZE    (2 << 20)
+-#define HUGE_1G_SIZE    (1 << 30)
+ #define BYTE_TO_KB(s)   ((s) >> 10)
+ #define KB_TO_BYTE(s)   ((s) << 10)
+ #define HUGE_2M_TO_KB(s) ((s) << 11)
+ 
+-#define TO_PCT 100
+-#define MAX_WM 100
+-#define MIN_WM 0
+-
+ #define BATCHSIZE (1 << 16)
+ 
+ #define factory_foreach_working_pid_params(iter, factory) \
+@@ -104,7 +99,6 @@ struct cslide_task_params {
+ struct vma_pf {
+     struct vma *vma;
+     struct page_refs *page_refs;
+-    struct vma_pf *next;
+ };
+ 
+ struct node_pages_info {
+@@ -366,7 +360,7 @@ static void npf_setup_tail(struct node_page_refs *npf)
+     }
+ }
+ 
+-static long long move_npf_to_list(struct node_page_refs *npf, struct page_refs **list, long long size)
++static void move_npf_to_list(struct node_page_refs *npf, struct page_refs **list, long long size)
+ {
+     struct page_refs *t = NULL;
+     struct page_refs *iter = NULL;
+@@ -394,7 +388,7 @@ static long long move_npf_to_list(struct node_page_refs *npf, struct page_refs *
+     }
+ 
+     npf->size -= moved_size;
+-    return moved_size;
++    return;
+ }
+ 
+ static int init_count_page_refs(struct count_page_refs *cpf, int node_num)
+@@ -1702,9 +1696,23 @@ static void cslide_stop_task(struct engine *eng, struct task *tk)
+ 
+ static char *get_time_stamp(time_t *t)
+ {
+-    char *ts = asctime(localtime(t));
+-    size_t len = strlen(ts);
++    struct tm *lt = NULL;
++    char *ts = NULL;
++    size_t len;
++
++    lt = localtime(t);
++    if (lt == NULL) {
++        etmemd_log(ETMEMD_LOG_ERR, "get local time fail\n");
++        return NULL;
++    }
++
++    ts = asctime(localtime(t));
++    if (ts == NULL) {
++        etmemd_log(ETMEMD_LOG_ERR, "get asctime fail\n");
++        return NULL;
++    }
+ 
++    len = strlen(ts);
+     if (ts[len - 1] == '\n') {
+         ts[len - 1] = '\0';
+     }
+diff --git a/src/etmemd_src/etmemd_rpc.c b/src/etmemd_src/etmemd_rpc.c
+index 969d4af..6b23059 100644
+--- a/src/etmemd_src/etmemd_rpc.c
++++ b/src/etmemd_src/etmemd_rpc.c
+@@ -169,12 +169,18 @@ static enum opt_result handle_obj_cmd(char *file_name, enum cmd_type type)
+ {
+     GKeyFile *config = NULL;
+     enum opt_result ret;
++    char resolve_path[PATH_MAX] = {0};
+ 
+     if (file_name == NULL) {
+         etmemd_log(ETMEMD_LOG_ERR, "file name is not set for obj cmd\n");
+         return OPT_INVAL;
+     }
+ 
++    if (realpath(file_name, resolve_path) == NULL) {
++        etmemd_log(ETMEMD_LOG_ERR, "config file is not a real path(%s)\n", strerror(errno));
++        return OPT_INVAL;
++    }
++
+     config = g_key_file_new();
+     if (config == NULL) {
+         etmemd_log(ETMEMD_LOG_ERR, "get empty config file fail\n");
+@@ -678,14 +684,17 @@ static int rpc_deal_parent(void)
+ 
+         if ((len = sprintf_s(pid_s, PID_STR_MAX_LEN, "%d", pid)) <= 0) {
+             etmemd_log(ETMEMD_LOG_ERR, "sprintf for pid failed\n");
++            close(handle);
+             exit(1);
+         }
+ 
+         if ((write(handle, pid_s, len)) != len) {
+             etmemd_log(ETMEMD_LOG_ERR, "Error writing to the file\n");
++            close(handle);
+             exit(1);
+         }
+ 
++        close(handle);
+         close(g_fd[1]);
+         if (read(g_fd[0], &val, sizeof(val)) <= 0) {
+             etmemd_log(ETMEMD_LOG_ERR, "Error reading to the file\n");
+diff --git a/src/etmemd_src/etmemd_scan.c b/src/etmemd_src/etmemd_scan.c
+index c287c48..1cafaed 100644
+--- a/src/etmemd_src/etmemd_scan.c
++++ b/src/etmemd_src/etmemd_scan.c
+@@ -32,7 +32,6 @@
+ #define PUD_SIZE_SHIFT 30
+ #define HEXADECIMAL_RADIX 16
+ #define PMD_IDLE_PTES_PARAMETER 512
+-#define VMFLAG_MAX_LEN 100
+ #define VMFLAG_MAX_NUM 30
+ #define VMFLAG_VALID_LEN 2
+ 
+diff --git a/src/etmemd_src/etmemd_thirdparty.c b/src/etmemd_src/etmemd_thirdparty.c
+index 53d4b8e..8d1b50e 100644
+--- a/src/etmemd_src/etmemd_thirdparty.c
++++ b/src/etmemd_src/etmemd_thirdparty.c
+@@ -83,6 +83,13 @@ static int set_engine_ops(struct engine *eng, struct thirdparty_params *params)
+     void *handler = NULL;
+     struct engine_ops *ops = NULL;
+     char *err = NULL;
++    char resolve_path[PATH_MAX] = {0};
++
++    if (realpath(params->libname, resolve_path) == NULL) {
++        etmemd_log(ETMEMD_LOG_ERR, "file of thirdparty libname %s is not a real path(%s)\n",
++                   params->libname, strerror(errno));
++        return -1;
++    }
+ 
+     handler = dlopen(params->libname, RTLD_NOW | RTLD_LOCAL);
+     err = dlerror();
+-- 
+2.27.0
+
