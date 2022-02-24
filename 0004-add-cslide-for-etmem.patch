@@ -1,0 +1,6484 @@
+From bf17dfb2b372f630f6f8ca1cbf6e6472c30bba46 Mon Sep 17 00:00:00 2001
+From: Kemeng Shi <shikemeng@huawei.com>
+Date: Tue, 6 Apr 2021 21:46:25 +0800
+Subject: [PATCH 04/50] add cslide for etmem
+
+Signed-off-by: Kemeng Shi <shikemeng@huawei.com>
+---
+ CMakeLists.txt                              |   12 +-
+ inc/etmem_inc/etmem.h                       |    3 +-
+ inc/etmem_inc/etmem_common.h                |    5 +
+ inc/etmem_inc/etmem_engine.h                |   20 +
+ inc/etmem_inc/{etmem_task.h => etmem_obj.h} |    8 +-
+ inc/etmemd_inc/etmemd.h                     |    4 +
+ inc/etmemd_inc/etmemd_common.h              |    6 +-
+ inc/etmemd_inc/etmemd_cslide.h              |   23 +
+ inc/etmemd_inc/etmemd_engine.h              |   51 +-
+ inc/etmemd_inc/etmemd_file.h                |   30 +-
+ inc/etmemd_inc/etmemd_pool_adapter.h        |    7 +-
+ inc/etmemd_inc/etmemd_project.h             |   40 +-
+ inc/etmemd_inc/etmemd_rpc.h                 |    9 +-
+ inc/etmemd_inc/etmemd_scan.h                |   10 +
+ inc/etmemd_inc/etmemd_slide.h               |    3 +-
+ inc/etmemd_inc/etmemd_task.h                |   17 +-
+ src/etmem_src/etmem.c                       |   64 +-
+ src/etmem_src/etmem_common.c                |   18 +-
+ src/etmem_src/etmem_engine.c                |  156 ++
+ src/etmem_src/etmem_obj.c                   |  197 ++
+ src/etmem_src/etmem_project.c               |   90 +-
+ src/etmem_src/etmem_rpc.c                   |   64 +-
+ src/etmem_src/etmem_task.c                  |  161 --
+ src/etmemd_src/etmemd_common.c              |   53 +-
+ src/etmemd_src/etmemd_cslide.c              | 2272 +++++++++++++++++++
+ src/etmemd_src/etmemd_engine.c              |   86 +-
+ src/etmemd_src/etmemd_file.c                |  438 +---
+ src/etmemd_src/etmemd_migrate.c             |    2 +-
+ src/etmemd_src/etmemd_pool_adapter.c        |   34 +-
+ src/etmemd_src/etmemd_project.c             |  707 ++++--
+ src/etmemd_src/etmemd_rpc.c                 |  143 +-
+ src/etmemd_src/etmemd_scan.c                |  150 +-
+ src/etmemd_src/etmemd_slide.c               |  186 +-
+ src/etmemd_src/etmemd_task.c                |  146 +-
+ 34 files changed, 4047 insertions(+), 1168 deletions(-)
+ create mode 100644 inc/etmem_inc/etmem_engine.h
+ rename inc/etmem_inc/{etmem_task.h => etmem_obj.h} (89%)
+ create mode 100644 inc/etmemd_inc/etmemd_cslide.h
+ create mode 100644 src/etmem_src/etmem_engine.c
+ create mode 100644 src/etmem_src/etmem_obj.c
+ delete mode 100644 src/etmem_src/etmem_task.c
+ create mode 100644 src/etmemd_src/etmemd_cslide.c
+
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index a4a83ca..fa64b89 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -32,6 +32,7 @@ set(ETMEMD_SRC
+  ${ETMEMD_SRC_DIR}/etmemd_project.c
+  ${ETMEMD_SRC_DIR}/etmemd_engine.c
+  ${ETMEMD_SRC_DIR}/etmemd_slide.c
++ ${ETMEMD_SRC_DIR}/etmemd_cslide.c
+  ${ETMEMD_SRC_DIR}/etmemd_task.c
+  ${ETMEMD_SRC_DIR}/etmemd_scan.c
+  ${ETMEMD_SRC_DIR}/etmemd_threadpool.c
+@@ -42,7 +43,8 @@ set(ETMEMD_SRC
+ set(ETMEM_SRC
+  ${ETMEM_SRC_DIR}/etmem.c
+  ${ETMEM_SRC_DIR}/etmem_project.c
+- ${ETMEM_SRC_DIR}/etmem_task.c
++ ${ETMEM_SRC_DIR}/etmem_obj.c
++ ${ETMEM_SRC_DIR}/etmem_engine.c
+  ${ETMEM_SRC_DIR}/etmem_rpc.c
+  ${ETMEM_SRC_DIR}/etmem_common.c)
+ 
+@@ -54,8 +56,12 @@ add_executable(etmem
+ 
+ set(EXECUTABLE_OUTPUT_PATH ${BUILD_DIR}/bin)
+ 
++include(FindPkgConfig)
++pkg_search_module(GLIB2 REQUIRED glib-2.0)
++
+ target_include_directories(etmemd PRIVATE
+- ${PROJECT_SOURCE_DIR}/inc/etmemd_inc)
++ ${PROJECT_SOURCE_DIR}/inc/etmemd_inc
++ ${GLIB2_INCLUDE_DIRS})
+ 
+ target_include_directories(etmem PRIVATE
+  ${PROJECT_SOURCE_DIR}/inc/etmem_inc)
+@@ -68,7 +74,7 @@ if(CONFIG_DEBUG STREQUAL "y")
+ endif()
+ 
+ set_target_properties(etmemd PROPERTIES LINK_FLAGS "-s -fPIE -pie -fPIC -Wl,-z,relro,-z,now,-z,noexecstack -Wtrampolines")
+-target_link_libraries(etmemd PRIVATE pthread dl rt boundscheck)
++target_link_libraries(etmemd PRIVATE pthread dl rt boundscheck numa ${GLIB2_LIBRARIES})
+ 
+ if( ${ARCHITECTURE} STREQUAL "aarch64" )
+  target_compile_options(etmemd PRIVATE -march=armv8-a)
+diff --git a/inc/etmem_inc/etmem.h b/inc/etmem_inc/etmem.h
+index 8d7b615..47979a2 100644
+--- a/inc/etmem_inc/etmem.h
++++ b/inc/etmem_inc/etmem.h
+@@ -24,6 +24,7 @@ typedef enum etmem_cmd_e {
+     ETMEM_CMD_START,
+     ETMEM_CMD_STOP,
+     ETMEM_CMD_SHOW,
++    ETMEM_CMD_ENGINE,
+     ETMEM_CMD_HELP,
+ } etmem_cmd;
+ 
+@@ -37,7 +38,7 @@ struct etmem_conf {
+ struct etmem_obj {
+     char *name;
+     void (*help)(void);
+-    int (*do_cmd)(const struct etmem_conf *conf);
++    int (*do_cmd)(struct etmem_conf *conf);
+ 
+     SLIST_ENTRY(etmem_obj) entry;
+ };
+diff --git a/inc/etmem_inc/etmem_common.h b/inc/etmem_inc/etmem_common.h
+index 9725c87..294d216 100644
+--- a/inc/etmem_inc/etmem_common.h
++++ b/inc/etmem_inc/etmem_common.h
+@@ -24,11 +24,16 @@
+ #define FILE_NAME_MAX_LEN    256
+ #define SOCKET_NAME_MAX_LEN  107
+ 
++#define ARRAY_SIZE(array) (sizeof(array) / sizeof((array)[0]))
++
+ struct mem_proj {
+     etmem_cmd cmd;
+     char *proj_name;
++    char *eng_name;
++    char *task_name;
+     char *file_name;
+     char *sock_name;
++    char *eng_cmd;
+ };
+ 
+ int parse_name_string(const char *val, char **name_str, size_t max_len);
+diff --git a/inc/etmem_inc/etmem_engine.h b/inc/etmem_inc/etmem_engine.h
+new file mode 100644
+index 0000000..6d1ca14
+--- /dev/null
++++ b/inc/etmem_inc/etmem_engine.h
+@@ -0,0 +1,20 @@
++/******************************************************************************
++ * Copyright (c) Huawei Technologies Co., Ltd. 2019-2021. All rights reserved.
++ * etmem is licensed under the Mulan PSL v2.
++ * You can use this software according to the terms and conditions of the Mulan PSL v2.
++ * You may obtain a copy of Mulan PSL v2 at:
++ * http://license.coscl.org.cn/MulanPSL2
++ * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR
++ * IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY OR FIT FOR A PARTICULAR
++ * PURPOSE.
++ * See the Mulan PSL v2 for more details.
++ * Author: louhongxiang
++ * Create: 2019-12-10
++ * Description: This is a header file of the data structure definition for etmem engine function.
++ ******************************************************************************/
++
++#ifndef __ETMEM_ENGINE_H__
++#define __ETMEM_ENGINE_H__
++void engine_init(void);
++void engine_exit(void);
++#endif
+diff --git a/inc/etmem_inc/etmem_task.h b/inc/etmem_inc/etmem_obj.h
+similarity index 89%
+rename from inc/etmem_inc/etmem_task.h
+rename to inc/etmem_inc/etmem_obj.h
+index aa8f218..635b6b3 100644
+--- a/inc/etmem_inc/etmem_task.h
++++ b/inc/etmem_inc/etmem_obj.h
+@@ -13,10 +13,10 @@
+  * Description: This is a header file of the function declaration for migration functions.
+  ******************************************************************************/
+ 
+-#ifndef __ETMEM_TASK_H__
+-#define __ETMEM_TASK_H__
++#ifndef __ETMEM_OBJ_H__
++#define __ETMEM_OBJ_H__
+ 
+-void migrate_init(void);
+-void migrate_exit(void);
++void obj_init(void);
++void obj_exit(void);
+ 
+ #endif
+diff --git a/inc/etmemd_inc/etmemd.h b/inc/etmemd_inc/etmemd.h
+index ed29d44..797049e 100644
+--- a/inc/etmemd_inc/etmemd.h
++++ b/inc/etmemd_inc/etmemd.h
+@@ -19,6 +19,10 @@
+ #include <stdint.h>
+ #include <stdbool.h>
+ 
++#define PTE_SIZE_SHIFT 12
++#define PMD_SIZE_SHIFT 21
++#define PUD_SIZE_SHIFT 30
++
+ /*
+  * page type specified by size
+  * */
+diff --git a/inc/etmemd_inc/etmemd_common.h b/inc/etmemd_inc/etmemd_common.h
+index 2fe8a73..1b62bbd 100644
+--- a/inc/etmemd_inc/etmemd_common.h
++++ b/inc/etmemd_inc/etmemd_common.h
+@@ -25,6 +25,8 @@
+ #define DECIMAL_RADIX 10
+ #define ETMEMD_MAX_PARAMETER_NUM 5
+ 
++#define ARRAY_SIZE(array) (sizeof(array) / sizeof((array)[0]))
++
+ /*
+  * function: parse cmdline passed to etmemd server.
+  *
+@@ -43,7 +45,7 @@ int get_int_value(const char *val, int *value);
+ int get_unsigned_int_value(const char *val, unsigned int *value);
+ void etmemd_safe_free(void **ptr);
+ 
+-FILE *etmemd_get_proc_file(const char *pid, const char *file, const char *mode);
++FILE *etmemd_get_proc_file(const char *pid, const char *file, int flags, const char *mode);
+ 
+ int get_keyword_and_value(const char *str, char *key, char *val);
+ 
+@@ -56,4 +58,6 @@ int get_keyword_and_value(const char *str, char *key, char *val);
+  * */
+ char *skip_blank_line(FILE *file);
+ 
++int dprintf_all(int fd, const char *format, ...);
++
+ #endif
+diff --git a/inc/etmemd_inc/etmemd_cslide.h b/inc/etmemd_inc/etmemd_cslide.h
+new file mode 100644
+index 0000000..2405f2d
+--- /dev/null
++++ b/inc/etmemd_inc/etmemd_cslide.h
+@@ -0,0 +1,23 @@
++/******************************************************************************
++ * Copyright (c) Huawei Technologies Co., Ltd. 2019-2021. All rights reserved.
++ * etmem is licensed under the Mulan PSL v2.
++ * You can use this software according to the terms and conditions of the Mulan PSL v2.
++ * You may obtain a copy of Mulan PSL v2 at:
++ * http://license.coscl.org.cn/MulanPSL2
++ * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR
++ * IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY OR FIT FOR A PARTICULAR
++ * PURPOSE.
++ * See the Mulan PSL v2 for more details.
++ * Author: louhongxiang
++ * Create: 2019-12-10
++ * Description: This is a header file of the function declaration for cslide function.
++ ******************************************************************************/
++
++#ifndef ETMEMD_CSLIDE_H
++#define ETMEMD_CSLIDE_H
++
++#include "etmemd_engine.h"
++
++int fill_engine_type_cslide(struct engine *eng);
++
++#endif
+diff --git a/inc/etmemd_inc/etmemd_engine.h b/inc/etmemd_inc/etmemd_engine.h
+index 13d676c..77916a5 100644
+--- a/inc/etmemd_inc/etmemd_engine.h
++++ b/inc/etmemd_inc/etmemd_engine.h
+@@ -16,11 +16,13 @@
+ #ifndef ETMEMD_ENGINE_H
+ #define ETMEMD_ENGINE_H
+ 
++#include <glib.h>
+ #include "etmemd.h"
+ #include "etmemd_task.h"
+ 
+ enum eng_type {
+     SLIDE_ENGINE = 0,
++    CSLIDE_ENGINE,
+     DYNAMIC_FB_ENGINE,
+     HISTORICAL_FB_ENGINE,
+     THIRDPARTY_ENGINE,
+@@ -32,44 +34,29 @@ enum eng_type {
+  * */
+ struct engine {
+     int engine_type;            /* engine type used for elimination strategy */
++    char *name;
+     void *params;               /* point to engine parameter struct */
+-    void *task;                 /* point to task this engine belongs to */
++    struct project *proj;
+     struct page_refs *page_ref; /* scan result */
++    struct engine_ops *ops;
++    struct task *tasks;
+     uint64_t page_cnt;          /* number of pages */
+-    struct adapter *adp;        /* configured migration strategy */
+-
+-    /* parse parameter configuration */
+-    int (*parse_param_conf)(struct engine *eng, FILE *file);
+-
+-    /* migrate policy function */
+-    struct memory_grade *(*mig_policy_func)(struct page_refs **page_refs, void *params);
+-
+-    /* alloc tkpid params space based on different policies. */
+-    int (*alloc_params)(struct task_pid **tk_pid);
+-};
+-
+-/*
+- * adapter struct
+- * */
+-struct adapter {
+-    /* scan function */
+-    struct page_refs *(*do_scan)(const struct task_pid *tpid, const struct task *tk);
+-
+-    /* migrate function */
+-    int (*do_migrate)(unsigned int pid, const struct memory_grade *memory_grade);
+-};
+-
+-struct engine_item {
+-    enum eng_type eng_type;
+-    int (*fill_eng_func)(struct engine *eng);
++    struct engine *next;
+ };
+ 
+-struct engine_private_item {
+-    char *priv_sec_name;
+-    int (*fill_eng_private_func)(const struct engine *eng, const char *val);
++struct engine_ops {
++    int (*fill_eng_params)(GKeyFile *config, struct engine *eng);
++    void (*clear_eng_params)(struct engine *eng);
++    int (*fill_task_params)(GKeyFile *config, struct task *task);
++    void (*clear_task_params)(struct task *tk);
++    int (*start_task)(struct engine *eng, struct task *tk);
++    void (*stop_task)(struct engine *eng, struct task *tk);
++    int (*alloc_pid_params)(struct engine *eng, struct task_pid **tk_pid);
++    void (*free_pid_params)(struct engine *eng, struct task_pid **tk_pid);
++    int (*eng_mgt_func)(struct engine *eng, struct task *tk, char *cmd, int fd);
+ };
+ 
+-const char *etmemd_get_eng_name(enum eng_type type);
++struct engine *etmemd_engine_add(GKeyFile *config);
++void etmemd_engine_remove(struct engine *eng);
+ 
+-int fill_engine_type(struct engine *eng, const char *val);
+ #endif
+diff --git a/inc/etmemd_inc/etmemd_file.h b/inc/etmemd_inc/etmemd_file.h
+index a251d1b..34ccaf9 100644
+--- a/inc/etmemd_inc/etmemd_file.h
++++ b/inc/etmemd_inc/etmemd_file.h
+@@ -17,23 +17,31 @@
+ #define ETMEMD_FILE_H
+ 
+ #include <stdio.h>
++#include <glib.h>
+ #include "etmemd_project.h"
+ #include "etmemd_task.h"
+ 
+-struct project_item {
+-    char *proj_sec_name;
+-    int (*fill_proj_func)(struct project *proj, const char *val);
+-    bool optional;
+-    bool set;
++#define PROJ_GROUP "project"
++#define ENG_GROUP  "engine"
++#define TASK_GROUP "task"
++
++enum val_type {
++    INT_VAL,
++    STR_VAL,
+ };
+ 
+-struct task_item {
+-    char *task_sec_name;
+-    int (*fill_task_func)(struct task *tk, const char *val);
+-    bool optional;
+-    bool set;
++struct config_item {
++    char *key;
++    enum val_type type;
++    int (*fill)(void *obj, void *val);
++    bool option;
+ };
+ 
+-int etmemd_fill_proj_by_conf(struct project *proj, FILE *conf_file);
++int parse_file_config(GKeyFile *config, char *group_name, struct config_item *items, unsigned n, void *obj);
++
++static inline int parse_to_int(void *val)
++{
++    return (int)(long long)val;
++}
+ 
+ #endif
+diff --git a/inc/etmemd_inc/etmemd_pool_adapter.h b/inc/etmemd_inc/etmemd_pool_adapter.h
+index 7448b50..3cb7b2a 100644
+--- a/inc/etmemd_inc/etmemd_pool_adapter.h
++++ b/inc/etmemd_inc/etmemd_pool_adapter.h
+@@ -21,10 +21,15 @@
+ #include "etmemd_project.h"
+ #include "etmemd_log.h"
+ 
++struct task_executor {
++    struct task *tk;
++    void *(*func)(void *arg);
++};
++
+ /*
+  * Start process scanning and memory migration
+  * */
+-int start_threadpool_work(struct task *tk);
++int start_threadpool_work(struct task_executor *executor);
+ 
+ /*
+  * Stop process and cleanup resource of scanning and memory migration
+diff --git a/inc/etmemd_inc/etmemd_project.h b/inc/etmemd_inc/etmemd_project.h
+index da929b4..d15c7fd 100644
+--- a/inc/etmemd_inc/etmemd_project.h
++++ b/inc/etmemd_inc/etmemd_project.h
+@@ -18,6 +18,7 @@
+ 
+ #include <sys/queue.h>
+ #include "etmemd_task.h"
++#include "etmemd_engine.h"
+ 
+ /* set the length of project name to 32 */
+ #define PROJECT_NAME_MAX_LEN  32
+@@ -25,12 +26,12 @@
+ #define PROJECT_SHOW_COLM_MAX 128
+ 
+ struct project {
+-    bool start;
++    char *name;
+     int interval;
+     int loop;
+     int sleep;
+-    char *name;
+-    struct task *tasks;
++    bool start;
++    struct engine *engs;
+ 
+     SLIST_ENTRY(project) entry;
+ };
+@@ -42,6 +43,10 @@ enum opt_result {
+     OPT_PRO_STARTED,
+     OPT_PRO_STOPPED,
+     OPT_PRO_NOEXIST,
++    OPT_ENG_EXISTED,
++    OPT_ENG_NOEXIST,
++    OPT_TASK_EXISTED,
++    OPT_TASK_NOEXIST,
+     OPT_INTER_ERR,
+     OPT_RET_END,
+ };
+@@ -49,32 +54,33 @@ enum opt_result {
+ /*
+  * function: Add project to etmem server.
+  *
+- * in:  const char *project_name - name of the project to be added
+- *      const char *file_name    - name of the project configuration file
++ * in:  GKeyFile *config - loaded config file
+  *
+- * out: OPT_SUCCESS(0)  - successed to add project
+- *      other value     - failed to add project
++ * out: OPT_SUCCESS(0)   - successed to add project
++ *      other value      - failed to add project
+  * */
+-enum opt_result etmemd_project_add(const char *project_name, const char *file_name);
++enum opt_result etmemd_project_add(GKeyFile *config);
+ 
+ /*
+- * function: Delete given project.
++ * function: Remove given project.
+  *
+- * in:  const char *project_name - name of the project to be deleted
++ * in:  GKeyFile *config - loaded config file
+  *
+- * out: OPT_SUCCESS(0)  - successed to delete project
+- *      other value     - failed to delete project
++ * out: OPT_SUCCESS(0)   - successed to delete project
++ *      other value      - failed to delete project
+  * */
+-enum opt_result etmemd_project_delete(const char *project_name);
++enum opt_result etmemd_project_remove(GKeyFile *config);
+ 
+ /*
+  * function: Show all the projects.
+  *
++ * in:  const char *project_name - name of the project to start migrate
++ *      int fd                   - client socket to show projects info
+  *
+  * out: OPT_SUCCESS(0)  - successed to show all the projects
+  *      other value     - failed to show any project
+  * */
+-enum opt_result etmemd_project_show(void);
++enum opt_result etmemd_project_show(const char *project_name, int fd);
+ 
+  /*
+   * function: Start migrate in given project.
+@@ -96,6 +102,12 @@ enum opt_result etmemd_migrate_start(const char *project_name);
+   * */
+ enum opt_result etmemd_migrate_stop(const char *project_name);
+ 
++enum opt_result etmemd_project_mgt_engine(const char *project_name, const char *eng_name, char *cmd, char *task_name, int sock_fd);
++enum opt_result etmemd_project_add_engine(GKeyFile *config);
++enum opt_result etmemd_project_remove_engine(GKeyFile *config);
++enum opt_result etmemd_project_add_task(GKeyFile *config);
++enum opt_result etmemd_project_remove_task(GKeyFile *config);
++
+ void etmemd_stop_all_projects(void);
+ 
+ #endif
+diff --git a/inc/etmemd_inc/etmemd_rpc.h b/inc/etmemd_inc/etmemd_rpc.h
+index ff27494..146cec3 100644
+--- a/inc/etmemd_inc/etmemd_rpc.h
++++ b/inc/etmemd_inc/etmemd_rpc.h
+@@ -19,11 +19,12 @@
+ #include <stdbool.h>
+ 
+ enum cmd_type {
+-    PROJ_ADD = 0,
+-    PROJ_DEL,
++    OBJ_ADD = 0,
++    OBJ_DEL,
+     MIG_START,
+     MIG_STOP,
+     PROJ_SHOW,
++    ENG_CMD,
+ };
+ 
+ enum rpc_decode_type {
+@@ -36,6 +37,10 @@ struct server_rpc_params {
+     char *proj_name;
+     char *file_name;
+     int cmd;
++    int sock_fd;
++    char *eng_name;
++    char *eng_cmd;
++    char *task_name;
+ };
+ 
+ struct server_rpc_parser {
+diff --git a/inc/etmemd_inc/etmemd_scan.h b/inc/etmemd_inc/etmemd_scan.h
+index 9ae387e..ed72e1a 100644
+--- a/inc/etmemd_inc/etmemd_scan.h
++++ b/inc/etmemd_inc/etmemd_scan.h
+@@ -16,6 +16,7 @@
+ #ifndef ETMEMD_SCAN_H
+ #define ETMEMD_SCAN_H
+ 
++#include <fcntl.h>
+ #include "etmemd.h"
+ #include "etmemd_task.h"
+ 
+@@ -31,6 +32,11 @@
+ #define MAPS_FILE               "/maps"
+ #define IDLE_SCAN_FILE          "/idle_pages"
+ 
++#define SMAPS_FILE              "/smaps"
++#define VMFLAG_HEAD             "VmFlags"
++
++#define SCAN_AS_HUGE            O_LARGEFILE
++
+ enum {
+     VMA_STAT_READ = 0,
+     VMA_STAT_WRITE,
+@@ -100,8 +106,11 @@ struct page_refs *etmemd_do_scan(const struct task_pid *tpid, const struct task
+ /* free vma list struct */
+ void free_vmas(struct vmas *vmas);
+ 
++struct page_refs **walk_vmas(int fd, struct walk_address *walk_address, struct page_refs **pf, unsigned long *use_rss);
+ int get_page_refs(const struct vmas *vmas, const char *pid, struct page_refs **page_refs, unsigned long *use_rss);
+ 
++int split_vmflags(char ***vmflags_array, char *vmflags);
++struct vmas *get_vmas_with_flags(const char *pid, char **vmflags_array, int vmflags_num, bool is_anon_only);
+ struct vmas *get_vmas(const char *pid);
+ 
+ void clean_page_refs_unexpected(void *arg);
+@@ -110,4 +119,5 @@ void clean_memory_grade_unexpected(void *arg);
+ 
+ struct page_refs *add_page_refs_into_memory_grade(struct page_refs *page_refs, struct page_refs **list);
+ int init_g_page_size(void);
++int page_type_to_size(enum page_type type);
+ #endif
+diff --git a/inc/etmemd_inc/etmemd_slide.h b/inc/etmemd_inc/etmemd_slide.h
+index e95438d..e76e97a 100644
+--- a/inc/etmemd_inc/etmemd_slide.h
++++ b/inc/etmemd_inc/etmemd_slide.h
+@@ -16,10 +16,11 @@
+ #ifndef ETMEMD_SLIDE_H
+ #define ETMEMD_SLIDE_H
+ 
+-
++#include "etmemd_pool_adapter.h"
+ #include "etmemd_engine.h"
+ 
+ struct slide_params {
++    struct task_executor *executor;
+     int t;          /* watermark */
+ };
+ 
+diff --git a/inc/etmemd_inc/etmemd_task.h b/inc/etmemd_inc/etmemd_task.h
+index b7fba2b..d6d89ea 100644
+--- a/inc/etmemd_inc/etmemd_task.h
++++ b/inc/etmemd_inc/etmemd_task.h
+@@ -20,6 +20,7 @@
+ #include <stdint.h>
+ #include <stdbool.h>
+ #include <pthread.h>
++#include <glib.h>
+ #include "etmemd_threadpool.h"
+ #include "etmemd_threadtimer.h"
+ 
+@@ -37,20 +38,16 @@ struct task_pid {
+ struct task {
+     char *type;
+     char *value;
++    char *name;
+     uint64_t max_threads;
+ 
+-    struct project *proj;
+-    struct engine *eng;
+     struct task_pid *pids;
++    struct engine *eng;
++    void *params;
+     pthread_t task_pt;
+     timer_thread *timer_inst;
+     thread_pool *threadpool_inst;
+ 
+-    int (*start_etmem)(struct task *tk);
+-    void (*stop_etmem)(struct task *tk);
+-    void (*delete_etmem)(struct task *tk);
+-    void *(*workflow_engine)(void *);
+-
+     struct task *next;
+ };
+ 
+@@ -64,5 +61,9 @@ void etmemd_free_task_struct(struct task **tk);
+ 
+ void free_task_pid_mem(struct task_pid **tk_pid);
+ 
+-void etmemd_print_tasks(const struct task *tk);
++void etmemd_print_tasks(int fd, const struct task *tk, char *engine_name, bool started);
++
++struct task *etmemd_add_task(GKeyFile *config);
++void etmemd_remove_task(struct task *tk);
++
+ #endif
+diff --git a/src/etmem_src/etmem.c b/src/etmem_src/etmem.c
+index 8bd171c..863f91b 100644
+--- a/src/etmem_src/etmem.c
++++ b/src/etmem_src/etmem.c
+@@ -19,8 +19,9 @@
+ #include <getopt.h>
+ #include "securec.h"
+ #include "etmem.h"
+-#include "etmem_task.h"
++#include "etmem_obj.h"
+ #include "etmem_project.h"
++#include "etmem_engine.h"
+ 
+ #define CMD_POSITION 1
+ 
+@@ -65,53 +66,10 @@ static int check_param(int argc, char *argv[], struct etmem_conf *conf,
+         return -1;
+     }
+ 
+-    return 0;
+-}
+-
+-static void fill_cmd_type(struct etmem_conf *conf, const int val)
+-{
+-    conf->cmd = val;
+-}
+-
+-struct cmd_item {
+-    char *cmd_name;
+-    enum etmem_cmd_e cmd;
+-    void (*fill_cmd_func)(struct etmem_conf *conf, const int val);
+-};
+-
+-struct cmd_item g_cmd_items[] = {
+-    {"add", ETMEM_CMD_ADD, fill_cmd_type},
+-    {"del", ETMEM_CMD_DEL, fill_cmd_type},
+-    {"start", ETMEM_CMD_START, fill_cmd_type},
+-    {"stop", ETMEM_CMD_STOP, fill_cmd_type},
+-    {"show", ETMEM_CMD_SHOW, fill_cmd_type},
+-    {"help", ETMEM_CMD_HELP, fill_cmd_type},
+-    {NULL, 0, NULL},
+-};
+-
+-static int parse_command(int argc, char *argv[], struct etmem_conf *conf,
+-                         const struct etmem_obj *obj)
+-{
+-    int ret = -1;
+-    int i = 0;
+-
+-    while (g_cmd_items[i].cmd_name != NULL) {
+-        if (strcmp(argv[CMD_POSITION], g_cmd_items[i].cmd_name) == 0) {
+-            g_cmd_items[i].fill_cmd_func(conf, (int)g_cmd_items[i].cmd);
+-            ret = 0;
+-            break;
+-        }
+-        i++;
+-    }
+-
+-    if (ret != 0) {
+-        printf("invalid command %s\n", argv[CMD_POSITION]);
+-        obj->help();
+-        return -1;
+-    }
+-
+-    conf->argc = argc - CMD_POSITION;
+-    conf->argv = argv + CMD_POSITION;
++    argc--;
++    argv++;
++    conf->argc = argc;
++    conf->argv = argv;
+ 
+     return 0;
+ }
+@@ -139,7 +97,7 @@ static int parse_args(int argc, char *argv[], struct etmem_conf *conf,
+         return -EINVAL;
+     }
+ 
+-    return parse_command(argc, argv, conf, *obj);
++    return 0;
+ }
+ 
+ void etmem_register_obj(struct etmem_obj *obj)
+@@ -162,7 +120,8 @@ int main(int argc, char *argv[])
+ 
+     SLIST_INIT(&g_etmem_objs);
+     project_init();
+-    migrate_init();
++    obj_init();
++    engine_init();
+ 
+     if (parse_args(argc, argv, &conf, &obj) != 0) {
+         if (conf.obj != NULL && strcmp(conf.obj, "help") == 0 &&
+@@ -173,7 +132,7 @@ int main(int argc, char *argv[])
+         goto out;
+     }
+ 
+-    if (conf.cmd == ETMEM_CMD_HELP) {
++    if (strcmp(conf.argv[0], "help") == 0) {
+         obj->help();
+         err = 0;
+         goto out;
+@@ -187,7 +146,8 @@ int main(int argc, char *argv[])
+     }
+ 
+ out:
++    engine_exit();
++    obj_exit();
+     project_exit();
+-    migrate_exit();
+     return err;
+ }
+diff --git a/src/etmem_src/etmem_common.c b/src/etmem_src/etmem_common.c
+index 9725db7..65d3690 100644
+--- a/src/etmem_src/etmem_common.c
++++ b/src/etmem_src/etmem_common.c
+@@ -60,7 +60,7 @@ int parse_name_string(const char *val, char **name_str, size_t max_len)
+ int etmem_parse_check_result(int params_cnt, int argc)
+ {
+     if (params_cnt > 0 && argc - 1 > params_cnt * 2) {  /* maximum number of args is limited to params_cnt * 2+1 */
+-        printf("warn: useless parameters passed in\n");
++        printf("warn: etmem useless parameters passed in\n");
+         return -E2BIG;
+     }
+ 
+@@ -83,6 +83,22 @@ void free_proj_member(struct mem_proj *proj)
+         free(proj->sock_name);
+         proj->sock_name = NULL;
+     }
++
++    if (proj->eng_name != NULL) {
++        free(proj->eng_name);
++        proj->eng_name = NULL;
++    }
++
++    if (proj->task_name != NULL) {
++        free(proj->task_name);
++        proj->task_name = NULL;
++    }
++
++    if (proj->eng_cmd != NULL) {
++        free(proj->eng_cmd);
++        proj->eng_cmd = NULL;
++    }
++
+ }
+ 
+ 
+diff --git a/src/etmem_src/etmem_engine.c b/src/etmem_src/etmem_engine.c
+new file mode 100644
+index 0000000..7673205
+--- /dev/null
++++ b/src/etmem_src/etmem_engine.c
+@@ -0,0 +1,156 @@
++/******************************************************************************
++ * Copyright (c) Huawei Technologies Co., Ltd. 2019-2021. All rights reserved.
++ * etmem is licensed under the Mulan PSL v2.
++ * You can use this software according to the terms and conditions of the Mulan PSL v2.
++ * You may obtain a copy of Mulan PSL v2 at:
++ * http://license.coscl.org.cn/MulanPSL2
++ * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR
++ * IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY OR FIT FOR A PARTICULAR
++ * PURPOSE.
++ * See the Mulan PSL v2 for more details.
++ * Author: louhongxiang
++ * Create: 2021-4-13
++ * Description: engine operation for etmem client
++ ******************************************************************************/
++
++#include <getopt.h>
++#include <stdio.h>
++#include "etmem_engine.h"
++#include "securec.h"
++#include "etmem.h"
++#include "etmem_common.h"
++#include "etmem_rpc.h"
++
++static void engine_help(void)
++{
++    printf("etmem engine help information\n");
++}
++
++static int engine_parse_cmd(struct etmem_conf *conf, struct mem_proj *proj)
++{
++    if (conf->argc == 0) {
++        printf("too few params for etmem client engine command\n");
++        return -1;
++    }
++    proj->eng_cmd = conf->argv[0];
++    proj->cmd = ETMEM_CMD_ENGINE;
++    return 0;
++}
++
++static int engine_parse_args(struct etmem_conf *conf, struct mem_proj *proj)
++{
++    int opt;
++    int params_cnt = 0;
++    int ret;
++    struct option opts[] = {
++        {"proj_name", required_argument, NULL,'n'},
++        {"socket", required_argument, NULL,'s'},
++        {"engine", required_argument, NULL,'e'},
++        {"task_name", required_argument, NULL,'t'},
++        {NULL, 0, NULL,0},
++    };
++
++    while ((opt = getopt_long(conf->argc, conf->argv, "n:s:e:t:", opts, NULL)) != -1) {
++        switch (opt) {
++            case 'n':
++                proj->proj_name = optarg;
++                break;
++
++            case 's':
++                proj->sock_name = optarg;
++                break;
++
++            case 'e':
++                proj->eng_name = optarg;
++                break;
++
++            case 't':
++                proj->task_name = optarg;
++                break;
++
++            case '?':
++                /* fallthrough */
++            default:
++                printf("invalid options: %s\n", conf->argv[optind]);
++                return -EINVAL;
++        }
++        params_cnt++;
++
++    }
++    ret = etmem_parse_check_result(params_cnt, conf->argc);
++    return ret;
++}
++
++static int engine_check_params(struct mem_proj *proj)
++{
++    if (proj->sock_name == NULL || strlen(proj->sock_name) == 0) {
++        printf("socket name to connect must be given, please check.\n");
++        return -1;
++    }
++
++    if (proj->proj_name == NULL || strlen(proj->proj_name) == 0) {
++        printf("project name must be given, please check.\n");
++        return -1;
++    }
++
++    if (proj->eng_cmd == NULL || strlen(proj->eng_cmd) == 0) {
++        printf("engine command must be given, please check.\n");
++        return -1;
++    }
++
++    if (proj->eng_name == NULL || strlen(proj->eng_name) == 0) {
++        printf("engine name must be given, please check.\n");
++        return -1;
++    }
++
++    return 0;
++}
++
++static int engine_do_cmd(struct etmem_conf *conf)
++{
++    struct mem_proj proj;
++    int ret;
++
++    ret = memset_s(&proj, sizeof(struct mem_proj), 0, sizeof(struct mem_proj));
++    if (ret != EOK) {
++        printf("memset_s for mem_proj fail\n");
++        return ret;
++    }
++
++    ret = engine_parse_cmd(conf, &proj);
++    if (ret != 0) {
++        printf("engine_parse_cmd fail\n");
++        return -1;
++    }
++
++    ret = engine_parse_args(conf, &proj);
++    if (ret != 0) {
++        printf("engine_parse_args fail\n");
++        return -1;
++    }
++
++    ret = engine_check_params(&proj);
++    if (ret != 0) {
++        printf("engine_check_params fail\n");
++        return -1;
++    }
++
++    ret = etmem_rpc_client(&proj);
++    return ret;
++}
++
++static struct etmem_obj g_etmem_engine = {
++    .name = "engine",
++    .help = engine_help,
++    .do_cmd = engine_do_cmd,
++};
++
++void engine_init(void)
++{
++    etmem_register_obj(&g_etmem_engine);
++}
++
++void engine_exit(void)
++{
++    etmem_unregister_obj(&g_etmem_engine);
++}
+diff --git a/src/etmem_src/etmem_obj.c b/src/etmem_src/etmem_obj.c
+new file mode 100644
+index 0000000..a3f66fe
+--- /dev/null
++++ b/src/etmem_src/etmem_obj.c
+@@ -0,0 +1,197 @@
++/******************************************************************************
++ * Copyright (c) Huawei Technologies Co., Ltd. 2019-2021. All rights reserved.
++ * etmem is licensed under the Mulan PSL v2.
++ * You can use this software according to the terms and conditions of the Mulan PSL v2.
++ * You may obtain a copy of Mulan PSL v2 at:
++ * http://license.coscl.org.cn/MulanPSL2
++ * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR
++ * IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY OR FIT FOR A PARTICULAR
++ * PURPOSE.
++ * See the Mulan PSL v2 for more details.
++ * Author: louhongxiang
++ * Create: 2021-4-14
++ * Description: etmem obj command API.
++ ******************************************************************************/
++
++#include <getopt.h>
++#include "securec.h"
++#include "etmem.h"
++#include "etmem_common.h"
++#include "etmem_rpc.h"
++#include "etmem_obj.h"
++
++static void obj_help(void)
++{
++    printf("\nUsage:\n"
++           "    etmem obj add [options]\n"
++           "    etmem obj del [options]\n"
++           "    etmem obj help [options]\n"
++           "\nOptions:\n"
++           "    -f|--file <conf_file>       Add configuration file\n"
++           "    -s|--socket <socket_name>   Socket name to connect\n"
++           "\nNotes:\n"
++           "    1. Configuration file must be given.\n"
++           "    2. Socket name must be given.\n");
++}
++
++struct obj_cmd_item {
++    char *cmd_name;
++    enum etmem_cmd_e cmd;
++};
++
++static struct obj_cmd_item g_obj_cmd_items[] = {
++    {"add", ETMEM_CMD_ADD},
++    {"del", ETMEM_CMD_DEL},
++};
++
++static int obj_parse_cmd(struct etmem_conf *conf, struct mem_proj *proj)
++{
++    unsigned i;
++    char *cmd = NULL;
++
++    cmd = conf->argv[0];
++    for (i = 0; i < ARRAY_SIZE(g_obj_cmd_items); i++) {
++        if (strcmp(cmd, g_obj_cmd_items[i].cmd_name) == 0) {
++            proj->cmd = g_obj_cmd_items[i].cmd;
++            return 0;
++        }
++    }
++
++    printf("obj cmd %s is not supportted.\n", cmd);
++    return -1;
++}
++
++static int parse_file_name(const char *val, char **file_name)
++{
++    size_t len;
++    int ret;
++
++    len = strlen(val) + 1;
++    if (len > FILE_NAME_MAX_LEN) {
++        printf("file name is too long, should not be larger than %u\n", FILE_NAME_MAX_LEN);
++        return -ENAMETOOLONG;
++    }
++
++    *file_name = (char *)calloc(len, sizeof(char));
++    if (*file_name == NULL) {
++        printf("malloc file name failed\n");
++        return -ENOMEM;
++    }
++
++    ret = strncpy_s(*file_name, len, val, len - 1);
++    if (ret != EOK) {
++        printf("strncpy_s file name fail\n");
++        free(*file_name);
++        *file_name = NULL;
++        return ret;
++    }
++
++    return 0;
++}
++
++static int obj_parse_args(struct etmem_conf *conf, struct mem_proj *proj)
++{
++    int opt, ret;
++    int params_cnt = 0;
++    struct option opts[] = {
++        {"file", required_argument, NULL, 'f'},
++        {"socket", required_argument, NULL, 's'},
++        {NULL, 0, NULL, 0},
++    };
++
++    while ((opt = getopt_long(conf->argc, conf->argv, "f:s:", opts, NULL)) != -1) {
++        switch (opt) {
++            case 'f':
++                ret = parse_file_name(optarg, &proj->file_name);
++                if (ret != 0) {
++                    printf("parse file name failed\n");
++                    return ret;
++                }
++                break;
++            case 's':
++                ret = parse_name_string(optarg, &proj->sock_name, SOCKET_NAME_MAX_LEN);
++                if (ret != 0) {
++                    printf("parse socket name failed.\n");
++                    return ret;
++                }
++                break;
++            case '?':
++                /* fallthrough */
++            default:
++                printf("invalid option: %s\n", conf->argv[optind]);
++                return -EINVAL;
++        }
++        params_cnt++;
++    }
++
++    ret = etmem_parse_check_result(params_cnt, conf->argc);
++
++    return ret;
++}
++
++static int obj_check_params(const struct mem_proj *proj)
++{
++    if (proj->sock_name == NULL || strlen(proj->sock_name) == 0) {
++        printf("socket name to connect must all be given, please check.\n");
++        return -EINVAL;
++    }
++
++    if (proj->file_name == NULL || strlen(proj->file_name) == 0) {
++        printf("file name must be given in add command.\n");
++        return -EINVAL;
++    }
++
++    return 0;
++}
++
++static int obj_do_cmd(struct etmem_conf *conf)
++{
++    struct mem_proj proj;
++    int ret;
++
++    ret = memset_s(&proj, sizeof(struct mem_proj), 0, sizeof(struct mem_proj));
++    if (ret != EOK) {
++        printf("memset_s for mem_proj failed\n");
++        return ret;
++    }
++
++    ret = obj_parse_cmd(conf, &proj);
++    if (ret != 0) {
++        printf("obj_parse_cmd fail\n");
++        return ret;
++    }
++
++    ret = obj_parse_args(conf, &proj);
++    if (ret != 0) {
++        printf("obj_parse_args fail\n");
++        goto EXIT;
++    }
++
++    ret = obj_check_params(&proj);
++    if (ret != 0) {
++        printf("obj_check_params fail\n");
++        goto EXIT;
++    }
++
++    ret = etmem_rpc_client(&proj);
++
++EXIT:
++    free_proj_member(&proj);
++    return ret;
++}
++
++static struct etmem_obj g_etmem_obj = {
++    .name = "obj",
++    .help = obj_help,
++    .do_cmd = obj_do_cmd,
++};
++
++void obj_init(void)
++{
++    etmem_register_obj(&g_etmem_obj);
++}
++
++void obj_exit(void)
++{
++    etmem_unregister_obj(&g_etmem_obj);
++}
+diff --git a/src/etmem_src/etmem_project.c b/src/etmem_src/etmem_project.c
+index 85363b0..790979e 100644
+--- a/src/etmem_src/etmem_project.c
++++ b/src/etmem_src/etmem_project.c
+@@ -27,65 +27,44 @@ static void project_help(void)
+ {
+     fprintf(stderr,
+             "\nUsage:\n"
+-            "    etmem project add [options]\n"
+-            "    etmem project del [options]\n"
++            "    etmem project start [options]\n"
++            "    etmem project stop [options]\n"
+             "    etmem project show [options]\n"
+             "    etmem project help\n"
+             "\nOptions:\n"
+-            "    -f|--file <conf_file>     Add configuration file\n"
+             "    -n|--name <proj_name>     Add project name\n"
+             "    -s|--socket <socket_name> Socket name to connect\n"
+             "\nNotes:\n"
+             "    1. Project name and socket name must be given when execute add or del option.\n"
+-            "    2. Configuration file must be given when execute add option.\n"
+-            "    3. Socket name must be given when execute show option.\n");
++            "    2. Socket name must be given when execute show option.\n");
+ }
+ 
+-static int project_parse_cmd(const struct etmem_conf *conf, struct mem_proj *proj)
+-{
+-    switch (conf->cmd) {
+-        case ETMEM_CMD_ADD:
+-            /* fallthrough */
+-        case ETMEM_CMD_DEL:
+-            /* fallthrough */
+-        case ETMEM_CMD_SHOW:
+-            goto EXIT;
+-        default:
+-            printf("invalid command %u of project\n", conf->cmd);
+-            return -EINVAL;
+-    }
++struct project_cmd_item {
++    char *cmd_name;
++    enum etmem_cmd_e cmd;
++};
+ 
+-EXIT:
+-    proj->cmd = conf->cmd;
+-    return 0;
+-}
++static struct project_cmd_item g_project_cmd_items[] = {
++    {"show", ETMEM_CMD_SHOW},
++    {"start", ETMEM_CMD_START},
++    {"stop", ETMEM_CMD_STOP},
++};
+ 
+-static int parse_file_name(const char *val, char **file_name)
++static int project_parse_cmd(struct etmem_conf *conf, struct mem_proj *proj)
+ {
+-    size_t len;
+-    int ret;
+-
+-    len = strlen(val) + 1;
+-    if (len > FILE_NAME_MAX_LEN) {
+-        printf("file name too long, should not be larger than %u\n", FILE_NAME_MAX_LEN);
+-        return -ENAMETOOLONG;
+-    }
+-
+-    *file_name = (char *)calloc(len, sizeof(char));
+-    if (*file_name == NULL) {
+-        printf("malloc file name failed.\n");
+-        return -ENOMEM;
+-    }
+-
+-    ret = strncpy_s(*file_name, len, val, len - 1);
+-    if (ret != EOK) {
+-        printf("strncpy_s file name failed.\n");
+-        free(*file_name);
+-        *file_name = NULL;
+-        return ret;
++    unsigned i;
++    char *cmd = NULL;
++
++    cmd = conf->argv[0];
++    for (i = 0; i < ARRAY_SIZE(g_project_cmd_items); i++) {
++        if (strcmp(cmd, g_project_cmd_items[i].cmd_name) == 0) {
++            proj->cmd = g_project_cmd_items[i].cmd;
++            return 0;
++        }
+     }
+ 
+-    return 0;
++    printf("project cmd %s is not supported\n", cmd);
++    return -1;
+ }
+ 
+ static int project_parse_args(const struct etmem_conf *conf, struct mem_proj *proj)
+@@ -94,7 +73,6 @@ static int project_parse_args(const struct etmem_conf *conf, struct mem_proj *pr
+     int ret;
+     int params_cnt = 0;
+     struct option opts[] = {
+-        {"file", required_argument, NULL, 'f'},
+         {"name", required_argument, NULL, 'n'},
+         {"socket", required_argument, NULL, 's'},
+         {NULL, 0, NULL, 0},
+@@ -103,13 +81,6 @@ static int project_parse_args(const struct etmem_conf *conf, struct mem_proj *pr
+     while ((opt = getopt_long(conf->argc, conf->argv, "f:n:s:",
+                               opts, NULL)) != -1) {
+         switch (opt) {
+-            case 'f':
+-                ret = parse_file_name(optarg, &proj->file_name);
+-                if (ret != 0) {
+-                    printf("parse file name failed.\n");
+-                    return ret;
+-                }
+-                break;
+             case 'n':
+                 ret = parse_name_string(optarg, &proj->proj_name, PROJECT_NAME_MAX_LEN);
+                 if (ret != 0) {
+@@ -149,14 +120,9 @@ static int project_check_params(const struct mem_proj *proj)
+         return 0;
+     }
+ 
+-    if (proj->proj_name == NULL || strlen(proj->proj_name) == 0) {
+-        printf("project name must all be given, please check.\n");
+-        return -EINVAL;
+-    }
+-
+-    if (proj->cmd == ETMEM_CMD_ADD) {
+-        if (proj->file_name == NULL || strlen(proj->file_name) == 0) {
+-            printf("file name must be given in add command.\n");
++    if (proj->cmd == ETMEM_CMD_START || proj->cmd == ETMEM_CMD_STOP) {
++        if (proj->proj_name == NULL || strlen(proj->proj_name) == 0) {
++            printf("project name must be given, please check\n");
+             return -EINVAL;
+         }
+     }
+@@ -164,7 +130,7 @@ static int project_check_params(const struct mem_proj *proj)
+     return 0;
+ }
+ 
+-static int project_do_cmd(const struct etmem_conf *conf)
++static int project_do_cmd(struct etmem_conf *conf)
+ {
+     struct mem_proj proj;
+     int ret;
+diff --git a/src/etmem_src/etmem_rpc.c b/src/etmem_src/etmem_rpc.c
+index 12a8f6d..8d03914 100644
+--- a/src/etmem_src/etmem_rpc.c
++++ b/src/etmem_src/etmem_rpc.c
+@@ -24,7 +24,7 @@
+ #include "securec.h"
+ #include "etmem_rpc.h"
+ 
+-#define ETMEM_CLIENT_REGISTER "proj_name %s file_name %s cmd %d"
++#define ETMEM_CLIENT_REGISTER "proj_name %s file_name %s cmd %d eng_name %s eng_cmd %s task_name %s"
+ 
+ #define INT_MAX_LEN 9
+ #define ETMEM_RPC_RECV_BUF_LEN 512
+@@ -86,6 +86,15 @@ static size_t etmem_client_get_str_len(const struct mem_proj *proj)
+     if (proj->file_name != NULL) {
+         total_len += strlen(proj->file_name);
+     }
++    if (proj->eng_name != NULL) {
++        total_len += strlen(proj->eng_name);
++    }
++    if (proj->eng_cmd != NULL) {
++        total_len += strlen(proj->eng_cmd);
++    }
++    if (proj->task_name != NULL) {
++        total_len += strlen(proj->task_name);
++    }
+ 
+     return total_len;
+ }
+@@ -108,7 +117,10 @@ static int etmem_client_send(const struct mem_proj *proj, int sockfd)
+     if (snprintf_s(reg_cmd, total_len, total_len - 1, ETMEM_CLIENT_REGISTER,
+                    proj->proj_name == NULL ? "-" : proj->proj_name,
+                    proj->file_name == NULL ? "-" : proj->file_name,
+-                   proj->cmd) <= 0) {
++                   proj->cmd,
++                   proj->eng_name == NULL ? "-" : proj->eng_name,
++                   proj->eng_cmd == NULL ? "-" : proj->eng_cmd,
++                   proj->task_name == NULL ? "-" : proj->task_name) <= 0) {
+         printf("snprintf_s failed.\n");
+         goto EXIT;
+     }
+@@ -135,16 +147,15 @@ EXIT:
+ static bool etmem_recv_find_fail_keyword(const char *recv_msg)
+ {
+     if (strstr(recv_msg, "error") != NULL) {
+-        printf("get rpc error response. %s\n", recv_msg);
+         return true;
+     }
+-
+     return false;
+ }
+ 
+ static int etmem_client_recv(int sockfd)
+ {
+-    ssize_t ret;
++    ssize_t recv_size;
++    int ret = -1;
+     char *recv_msg = NULL;
+     uint8_t *recv_buf = NULL;
+     size_t recv_len = ETMEM_RPC_RECV_BUF_LEN;
+@@ -155,22 +166,27 @@ static int etmem_client_recv(int sockfd)
+         return -1;
+     }
+ 
+-    ret = recv(sockfd, recv_buf, recv_len, 0);
+-    if (ret < 0) {
+-        perror("recv failed:"); 
+-        goto EXIT;
+-    }
+-    if ((unsigned long)ret >= recv_len) {
+-        printf("recv too long.\n");
+-        ret = -1;
+-        goto EXIT;
+-    }
+-
+-    recv_msg = (char *)recv_buf;
+-    recv_msg[recv_len - 1] = '\0';
+-    if (etmem_recv_find_fail_keyword(recv_msg)) {
+-        ret = 0;
+-        goto EXIT;
++    while (true) {
++        recv_size = recv(sockfd, recv_buf, recv_len - 1, 0);
++        if (recv_size < 0) {
++            perror("recv failed:");
++            goto EXIT;
++        }
++        if (recv_size == 0) {
++            if (errno == EAGAIN || errno == EWOULDBLOCK) {
++                printf("recv timeout:\n");
++            }
++            ret = 0;
++            goto EXIT;
++        }
++
++        recv_msg = (char *)recv_buf;
++        recv_msg[recv_size] = '\0';
++        printf("%s", recv_msg);
++        if (etmem_recv_find_fail_keyword(recv_msg)) {
++            printf("error occurs when getting response from etmemd server\n");
++            goto EXIT;
++        }
+     }
+ 
+ EXIT:
+@@ -207,12 +223,6 @@ int etmem_rpc_client(const struct mem_proj *proj)
+         ret = -ECOMM;
+         goto EXIT;
+     }
+-    if (ret == 0) {
+-        printf("error occurs when getting response from etmemd server.\n");
+-        ret = -EPERM;
+-        goto EXIT;
+-    }
+-    ret = 0;
+ 
+ EXIT:
+     close(sockfd);
+diff --git a/src/etmem_src/etmem_task.c b/src/etmem_src/etmem_task.c
+deleted file mode 100644
+index fc3206d..0000000
+--- a/src/etmem_src/etmem_task.c
++++ /dev/null
+@@ -1,161 +0,0 @@
+-/******************************************************************************
+- * Copyright (c) Huawei Technologies Co., Ltd. 2019-2021. All rights reserved.
+- * etmem is licensed under the Mulan PSL v2.
+- * You can use this software according to the terms and conditions of the Mulan PSL v2.
+- * You may obtain a copy of Mulan PSL v2 at:
+- * http://license.coscl.org.cn/MulanPSL2
+- * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR
+- * IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY OR FIT FOR A PARTICULAR
+- * PURPOSE.
+- * See the Mulan PSL v2 for more details.
+- * Author: louhongxiang
+- * Create: 2019-12-10
+- * Description: Migration command API.
+- ******************************************************************************/
+-
+-#include <stdlib.h>
+-#include <stdio.h>
+-#include <string.h>
+-#include <getopt.h>
+-#include "securec.h"
+-#include "etmem.h"
+-#include "etmem_task.h"
+-#include "etmem_common.h"
+-#include "etmem_rpc.h"
+-
+-static void migrate_help(void)
+-{
+-    fprintf(stderr,
+-            "\nUsage:\n"
+-            "    etmem migrate start [options]\n"
+-            "    etmem migrate stop  [options]\n"
+-            "    etmem migrate help\n"
+-            "\nOptions:\n"
+-            "    -n|--name <proj_name>     Add project name\n"
+-            "    -s|--socket <socket_name> Socket name to connect\n"
+-            "\nNotes:\n"
+-            "    Project name and socket name must be given when execute start or stop option.\n");
+-}
+-
+-static int migrate_parse_cmd(const struct etmem_conf *conf, struct mem_proj *proj)
+-{
+-    switch (conf->cmd) {
+-        case ETMEM_CMD_START:
+-            /* fallthrough */
+-        case ETMEM_CMD_STOP:
+-            goto EXIT;
+-        default:
+-            printf("invalid command %u of migrate\n", conf->cmd);
+-            return -EINVAL;
+-    }
+-
+-EXIT:
+-    proj->cmd = conf->cmd;
+-    return 0;
+-}
+-
+-static int migrate_parse_args(const struct etmem_conf *conf, struct mem_proj *proj)
+-{
+-    int opt;
+-    int params_cnt = 0;
+-    int ret;
+-    struct option opts[] = {
+-        {"name", required_argument, NULL, 'n'},
+-        {"socket", required_argument, NULL, 's'},
+-        {NULL, 0, NULL, 0},
+-    };
+-
+-    while ((opt = getopt_long(conf->argc, conf->argv, "n:s:",
+-                              opts, NULL)) != -1) {
+-        switch (opt) {
+-            case 'n':
+-                ret = parse_name_string(optarg, &proj->proj_name, PROJECT_NAME_MAX_LEN);
+-                if (ret != 0) {
+-                    printf("parse project name failed.\n");
+-                    return ret;
+-                }
+-                break;
+-            case 's':
+-                ret = parse_name_string(optarg, &proj->sock_name, SOCKET_NAME_MAX_LEN);
+-                if (ret != 0) {
+-                    printf("parse socket name failed.\n");
+-                    return ret;
+-                }
+-                break;
+-            case '?':
+-                /* fallthrough */
+-            default:
+-                ret = -EINVAL;
+-                printf("invalid option: %s\n", conf->argv[optind]);
+-                return ret;
+-        }
+-        params_cnt++;
+-    }
+-
+-    ret = etmem_parse_check_result(params_cnt, conf->argc);
+-    if (ret != 0) {
+-        return ret;
+-    }
+-
+-    return 0;
+-}
+-
+-static int migrate_check_params(const struct mem_proj *proj)
+-{
+-    if (proj->proj_name == NULL || strlen(proj->proj_name) == 0 ||
+-        proj->sock_name == NULL || strlen(proj->sock_name)  == 0) {
+-        printf("project name and socket name must all be given, please check.\n");
+-        return -EINVAL;
+-    }
+-
+-    return 0;
+-}
+-
+-static int migrate_do_cmd(const struct etmem_conf *conf)
+-{
+-    struct mem_proj proj;
+-    int ret;
+-
+-    ret = memset_s(&proj, sizeof(struct mem_proj), 0, sizeof(struct mem_proj));
+-    if (ret != EOK) {
+-        printf("memset_s for mem_proj failed.\n");
+-        return ret;
+-    }
+-
+-    ret = migrate_parse_cmd(conf, &proj);
+-    if (ret != 0) {
+-        goto EXIT;
+-    }
+-
+-    ret = migrate_parse_args(conf, &proj);
+-    if (ret != 0) {
+-        goto EXIT;
+-    }
+-
+-    ret = migrate_check_params(&proj);
+-    if (ret != 0) {
+-        goto EXIT;
+-    }
+-
+-    etmem_rpc_client(&proj);
+-
+-EXIT:
+-    free_proj_member(&proj);
+-    return ret;
+-}
+-
+-static struct etmem_obj g_etmem_migrate = {
+-    .name = "migrate",
+-    .help = migrate_help,
+-    .do_cmd = migrate_do_cmd,
+-};
+-
+-void migrate_init(void)
+-{
+-    etmem_register_obj(&g_etmem_migrate);
+-}
+-
+-void migrate_exit(void)
+-{
+-    etmem_unregister_obj(&g_etmem_migrate);
+-}
+diff --git a/src/etmemd_src/etmemd_common.c b/src/etmemd_src/etmemd_common.c
+index 0fe070c..43ed013 100644
+--- a/src/etmemd_src/etmemd_common.c
++++ b/src/etmemd_src/etmemd_common.c
+@@ -21,6 +21,9 @@
+ #include <pthread.h>
+ #include <sys/time.h>
+ #include <ctype.h>
++#include <unistd.h>
++#include <sys/stat.h>
++#include <fcntl.h>
+ 
+ #include "securec.h"
+ #include "etmemd_common.h"
+@@ -214,9 +217,10 @@ static char *etmemd_get_proc_file_str(const char *pid, const char *file)
+     return file_name;
+ }
+ 
+-FILE *etmemd_get_proc_file(const char *pid, const char *file, const char *mode)
++FILE *etmemd_get_proc_file(const char *pid, const char *file, int flags, const char *mode)
+ {
+     char *file_name = NULL;
++    int fd = -1;
+     FILE *fp = NULL;
+ 
+     file_name = etmemd_get_proc_file_str(pid, file);
+@@ -224,7 +228,14 @@ FILE *etmemd_get_proc_file(const char *pid, const char *file, const char *mode)
+         return NULL;
+     }
+ 
+-    fp = fopen(file_name, mode);
++    fd = open(file_name, flags);
++    if (fd < 0) {
++        etmemd_log(ETMEMD_LOG_ERR, "open file %s fail\n", file_name);
++        goto free_file_name;
++    }
++    fp = fdopen(fd, mode);
++
++free_file_name:
+     free(file_name);
+     return fp;
+ }
+@@ -366,3 +377,41 @@ char *skip_blank_line(FILE *file)
+ 
+     return get_line;
+ }
++
++static int write_all(int fd, const char *buf)
++{
++    ssize_t rest = strlen(buf);
++    ssize_t send_size;
++
++    while (rest > 0) {
++        send_size = write(fd, buf, rest);
++        if (send_size < 0) {
++            return -1;
++        }
++        rest -= send_size;
++    }
++    return 0;
++}
++
++int dprintf_all(int fd, const char *format, ...)
++{
++    char line[FILE_LINE_MAX_LEN];
++    int ret;
++    va_list args_in;
++
++    va_start(args_in, format);
++    ret = vsprintf_s(line, FILE_LINE_MAX_LEN, format, args_in);
++    if (ret > FILE_LINE_MAX_LEN) {
++        etmemd_log(ETMEMD_LOG_ERR, "fprintf_all fail as truncated.\n");
++        return -1;
++    }
++
++    ret = write_all(fd, line);
++    if (ret < 0) {
++        etmemd_log(ETMEMD_LOG_ERR, "write_all fail.\n");
++        return -1;
++    }
++
++    va_end(args_in);
++    return 0;
++}
+diff --git a/src/etmemd_src/etmemd_cslide.c b/src/etmemd_src/etmemd_cslide.c
+new file mode 100644
+index 0000000..a3692ad
+--- /dev/null
++++ b/src/etmemd_src/etmemd_cslide.c
+@@ -0,0 +1,2272 @@
++/******************************************************************************
++ * Copyright (c) Huawei Technologies Co., Ltd. 2019-2021. All rights reserved.
++ * etmem is licensed under the Mulan PSL v2.
++ * You can use this software according to the terms and conditions of the Mulan PSL v2.
++ * You may obtain a copy of Mulan PSL v2 at:
++ * http://license.coscl.org.cn/MulanPSL2
++ * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR
++ * IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY OR FIT FOR A PARTICULAR
++ * PURPOSE.
++ * See the Mulan PSL v2 for more details.
++ * Author: louhongxiang
++ * Create: 2021-4-19
++ * Description: Memigd cslide API.
++ ******************************************************************************/
++
++#include <stdlib.h>
++#include <stdio.h>
++#include <string.h>
++#include <unistd.h>
++#include <numaif.h>
++#include <numa.h>
++#include <linux/limits.h>
++#include <time.h>
++
++#include "securec.h"
++#include "etmemd_log.h"
++#include "etmemd_common.h"
++#include "etmemd_engine.h"
++#include "etmemd_cslide.h"
++#include "etmemd_scan.h"
++#include "etmemd_migrate.h"
++#include "etmemd_file.h"
++
++#define HUGE_1M_SIZE    (1 << 20)
++#define HUGE_2M_SIZE    (2 << 20)
++#define HUGE_1G_SIZE    (1 << 30)
++#define BYTE_TO_KB(s)   ((s) >> 10)
++#define KB_TO_BYTE(s)   ((s) << 10)
++
++#define TO_PCT 100
++#define MAX_WM 100
++#define MIN_WM 0
++
++#define BATCHSIZE (1 << 16)
++
++#define factory_foreach_working_pid_params(iter, factory) \
++    for ((iter) = (factory)->working_head, next_working_params(&(iter)); (iter) != NULL; (iter) = (iter)->next, next_working_params(&(iter)))
++
++#define factory_foreach_pid_params(iter, factory) \
++    for ((iter) = (factory)->working_head; (iter) != NULL; (iter) = (iter)->next)
++
++struct node_mem {
++    long long huge_total;
++    long long huge_free;
++};
++
++struct sys_mem {
++    int node_num;
++    struct node_mem *node_mem;
++};
++
++struct node_page_refs {
++    struct page_refs *head;
++    struct page_refs *tail;
++    int64_t size;
++    uint32_t num;
++};
++
++struct count_page_refs {
++    struct node_page_refs *node_pfs;
++    int node_num;
++};
++
++struct node_pair {
++    int index;
++    int hot_node;
++    int cold_node;
++};
++
++struct node_map {
++    struct node_pair *pair;
++    int total_num;
++    int cur_num;
++};
++
++struct node_verifier {
++    int node_num;
++    int *nodes_map_count;
++};
++
++struct cslide_task_params {
++    bool anon_only;
++    struct {
++        char *vmflags_str;
++        char **vmflags_array;
++        int vmflags_num;
++    };
++};
++
++struct vma_pf {
++    struct vma *vma;
++    struct page_refs *page_refs;
++    struct vma_pf *next;
++};
++
++struct node_pages_info {
++    uint32_t hot;
++    uint32_t cold;
++};
++
++enum pid_param_state {
++    STATE_NONE = 0,
++    STATE_WORKING,
++    STATE_REMOVE,
++    STATE_FREE,
++};
++
++struct cslide_pid_params {
++    enum pid_param_state state;
++    int count;
++    struct count_page_refs *count_page_refs;
++    struct memory_grade *memory_grade;
++    struct node_pages_info *node_pages_info;
++    struct vmas *vmas;
++    struct vma_pf *vma_pf;
++    unsigned int pid;
++    struct cslide_eng_params *eng_params;
++    struct cslide_task_params *task_params;
++    struct cslide_pid_params *next;
++};
++
++struct cslide_params_factory {
++    pthread_mutex_t mtx;
++    struct cslide_pid_params *to_add_head;
++    struct cslide_pid_params *to_add_tail;
++    struct cslide_pid_params *working_head;
++};
++
++struct cslide_eng_params {
++    struct sys_mem mem;
++    struct node_map node_map;
++    int node_watermark;
++    int hot_threshold;
++    int hot_reserve;    // in MB
++    int mig_quota;      // in MB
++    pthread_t worker;
++    pthread_mutex_t stat_mtx;
++    time_t stat_time;
++    struct {
++        int loop;
++        int interval;
++        int sleep;
++    };
++    struct cslide_params_factory factory;
++    bool finish;
++};
++
++struct ctrl_cap {
++    long long cap;
++    long long used;
++};
++
++struct node_ctrl {
++    struct ctrl_cap hot_move_cap;
++    struct ctrl_cap hot_prefetch_cap;
++    struct ctrl_cap cold_move_cap;
++    long long cold_replaced;
++    long long cold_free;
++    long long free;
++    long long total;
++    long long quota;
++    long long reserve;
++};
++
++struct flow_ctrl {
++    struct node_ctrl *node_ctrl;
++    int pair_num;
++    int hot_enough;
++    int prefetch_enough;
++    int cold_enough;
++};
++
++struct page_filter {
++    void (*flow_cal_func)(struct flow_ctrl *ctrl);
++    long long (*flow_move_func)(struct flow_ctrl *ctrl, long long target, int node);
++    bool (*flow_enough)(struct flow_ctrl *ctrl);
++    void (*filter_policy)(struct page_filter *filter, struct node_pair *pair, struct count_page_refs *cpf, struct memory_grade *memory_grade);
++    struct flow_ctrl *ctrl;
++    int count_start;
++    int count_end;
++    int count_step;
++};
++
++struct page_offset {
++    struct page_refs *page_refs;
++    uint64_t to_offset;
++};
++
++struct cslide_cmd_item {
++    char *name;
++    int (*func)(void *params, int fd);
++};
++
++struct vma_pf *g_share_vma_head = NULL;
++
++static inline int get_node_num(void)
++{
++    return numa_num_configured_nodes();
++}
++
++static int init_sys_mem(struct sys_mem *mem)
++{
++    int node_num = get_node_num();
++
++    if (node_num <= 0) {
++        etmemd_log(ETMEMD_LOG_ERR, "node number %d is invalid \n", node_num);
++        return -1;
++    }
++
++    mem->node_mem = malloc(sizeof(struct node_mem) * node_num);
++    if (mem->node_mem == NULL) {
++        etmemd_log(ETMEMD_LOG_ERR, "alloc node_mem fail\n");
++        return -1;
++    }
++    mem->node_num = node_num;
++    return 0;
++}
++
++static void destroy_sys_mem(struct sys_mem *mem)
++{
++    mem->node_num = -1;
++    free(mem->node_mem);
++    mem->node_mem = NULL;
++}
++
++static int read_hugepage_num(char *path)
++{
++    FILE *f = NULL;
++    char *line = NULL;
++    size_t line_len = 0;
++    int nr = -1;
++
++    f = fopen(path, "r");
++    if (f == NULL) {
++        etmemd_log(ETMEMD_LOG_ERR, "open file %s failed\n", path);
++        return -1;
++    }
++    if (getline(&line, &line_len, f) < 0) {
++        etmemd_log(ETMEMD_LOG_ERR, "read free hugepage from %s fail\n", path);
++        goto close_file;
++    }
++
++    nr = strtoull(line, NULL, 0);
++    free(line);
++close_file:
++    fclose(f);
++    return nr;
++}
++
++static long long get_single_huge_mem(int node, int huge_size, char *huge_state)
++{
++    char path[PATH_MAX];
++    int nr;
++
++    if (sprintf_s(path, PATH_MAX, "/sys/devices/system/node/node%d/hugepages/hugepages-%dkB/%s_hugepages",
++                  node, huge_size, huge_state) <= 0) {
++        etmemd_log(ETMEMD_LOG_ERR, "snprintf path to get hugepage number fail\n");
++        return -1;
++    }
++
++    nr = read_hugepage_num(path);
++    if (nr < 0) {
++        return -1;
++    }
++
++    return KB_TO_BYTE((long long)nr * (long long)huge_size);
++}
++
++static long long get_node_huge_total(int node, char *huge_state)
++{
++    long long size_2m;
++
++    size_2m = get_single_huge_mem(node, BYTE_TO_KB(HUGE_2M_SIZE), huge_state);
++    if (size_2m < 0) {
++        etmemd_log(ETMEMD_LOG_ERR, "get 2M %s page in node %d fail\n", huge_state, node);
++        return -1;
++    }
++
++    return size_2m;
++}
++
++static int get_node_huge_mem(int node, struct node_mem *mem)
++{
++    mem->huge_total = get_node_huge_total(node, "nr");
++    if (mem->huge_total <= 0) {
++        etmemd_log(ETMEMD_LOG_ERR, "get total hugepages of node %d fail\n", node);
++        return -1;
++    }
++    mem->huge_free = get_node_huge_total(node, "free");
++    if (mem->huge_free < 0) {
++        etmemd_log(ETMEMD_LOG_ERR, "get free hugepages of node %d fail\n", node);
++        return -1;
++    }
++
++    return 0;
++}
++
++static int get_node_mem(int node, struct node_mem *mem)
++{
++    if (get_node_huge_mem(node, mem) != 0) {
++        etmemd_log(ETMEMD_LOG_ERR, "get huge memory info of node %d fail\n", node);
++        return -1;
++    }
++
++    return 0;
++}
++
++static int get_sys_mem(struct sys_mem *mem)
++{
++    int i;
++
++    for (i = 0; i < mem->node_num; i++) {
++        if (get_node_mem(i, &(mem->node_mem[i])) != 0) {
++            etmemd_log(ETMEMD_LOG_ERR, "get memory info of node %d fail\n", i);
++            return -1;
++        }
++    }
++
++    return 0;
++}
++
++static void init_node_page_refs(struct node_page_refs *npf)
++{
++    npf->head = NULL;
++    npf->tail = NULL;
++    npf->size = 0;
++    npf->num = 0;
++}
++
++static void clean_node_page_refs(struct node_page_refs *npf)
++{
++    clean_page_refs_unexpected(&npf->head);
++    npf->tail = NULL;
++    npf->size = 0;
++    npf->num = 0;
++}
++
++static void npf_add_pf(struct node_page_refs *npf, struct page_refs *page_refs)
++{
++    if (npf->head == NULL) {
++        npf->head = page_refs;
++        npf->tail = page_refs;
++    } else {
++        npf->tail->next = page_refs;
++        npf->tail = page_refs;
++    }
++
++    npf->size += page_type_to_size(page_refs->type);
++    npf->num++;
++}
++
++/* must called when all pf add to npf with npf_add_pf */
++static void npf_setup_tail(struct node_page_refs *npf)
++{
++    if (npf->tail != NULL) {
++        npf->tail->next = NULL;
++    }
++}
++
++static long long move_npf_to_list(struct node_page_refs *npf, struct page_refs **list, long long size)
++{
++    struct page_refs *t = NULL;
++    struct page_refs *iter = NULL;
++    struct page_refs *tmp = NULL;
++    long long moved_size = 0;
++
++    if (npf->size <= size) {
++        t = npf->tail;
++        moved_size = npf->size;
++    } else {
++        for (iter = npf->head; iter != NULL && size >= moved_size + page_type_to_size(iter->type); iter = iter->next) {
++            moved_size += page_type_to_size(iter->type);
++            t = iter;
++        }
++    }
++
++    if (t != NULL) {
++        tmp = t->next;
++        t->next = *list;
++        *list = npf->head;
++        npf->head = tmp;
++        if (tmp == NULL) {
++            npf->tail = NULL;
++        }
++    }
++
++    npf->size -= moved_size;
++    return moved_size;
++}
++
++static int init_count_page_refs(struct count_page_refs *cpf, int node_num)
++{
++    int i;
++
++    cpf->node_pfs = malloc(sizeof(struct node_page_refs) * node_num);
++    if (cpf->node_pfs == NULL) {
++        etmemd_log(ETMEMD_LOG_ERR, "alloc node_page_refs fail\n");
++        return -1;
++    }
++    for (i = 0; i < node_num; i++) {
++        init_node_page_refs(&cpf->node_pfs[i]);
++    }
++    cpf->node_num = node_num;
++    return 0;
++}
++
++static void clean_count_page_refs(struct count_page_refs *cpf)
++{
++    int i;
++
++    for (i = 0; i < cpf->node_num; i++) {
++        clean_node_page_refs(&cpf->node_pfs[i]);
++    }
++}
++
++static void destroy_count_page_refs(struct count_page_refs *cpf)
++{
++    clean_count_page_refs(cpf);
++    free(cpf->node_pfs);
++    cpf->node_pfs = NULL;
++    cpf->node_num = 0;
++}
++
++static void insert_count_pfs(struct count_page_refs *cpf, struct page_refs *pf, int *nodes, int num)
++{
++    struct node_page_refs *npf = NULL;
++    struct page_refs *next = NULL;
++    int node, count, i;
++
++    for (i = 0; i < num; i++) {
++        next = pf->next;
++        node = nodes[i];
++        if (node < 0 || node >= cpf->node_num) {
++            etmemd_log(ETMEMD_LOG_WARN, "addr %llx with invalid node %d\n", pf->addr, node);
++            pf->next = NULL;
++            etmemd_free_page_refs(pf);
++            pf = next;
++            continue;
++        }
++        count = pf->count;
++        npf = &cpf[count].node_pfs[node];
++        npf_add_pf(npf, pf);
++        pf = next;
++    }
++}
++
++/* must called after all page_refs insert by insert_count_pfs */
++static void setup_count_pfs_tail(struct count_page_refs *cpf, int count)
++{
++    int node, c;
++    struct node_page_refs *npf = NULL;
++
++    for (c = 0; c <= count; c++) {
++        for (node = 0; node < cpf->node_num; node++) {
++            npf = &cpf[c].node_pfs[node];
++            npf_setup_tail(npf);
++        }
++    }
++}
++
++static int init_node_map(struct node_map *node_map, int node_num)
++{
++    int pair_num;
++
++    if (node_num % 2 != 0) {
++        etmemd_log(ETMEMD_LOG_ERR, "node_num is not even\n");
++        return -1;
++    }
++    pair_num = node_num / 2;
++    node_map->pair = calloc(pair_num, sizeof(struct node_pair));
++    if (node_map->pair == NULL) {
++        etmemd_log(ETMEMD_LOG_ERR, "alloc memory for node map fail\n");
++        return -1;
++    }
++    node_map->total_num = pair_num;
++    node_map->cur_num = 0;
++    return 0;
++}
++
++static void destroy_node_map(struct node_map *map)
++{
++    free(map->pair);
++    map->pair = NULL;
++    map->total_num = 0;
++    map->cur_num = 0;
++}
++
++static int add_node_pair(struct node_map *map, int cold_node, int hot_node)
++{
++    if (map->cur_num == map->total_num) {
++        etmemd_log(ETMEMD_LOG_ERR, "too much pair, add pair hot %d cold %d fail\n",
++                   hot_node, cold_node);
++        return -1;
++    }
++    map->pair[map->cur_num].hot_node = hot_node;
++    map->pair[map->cur_num].cold_node = cold_node;
++    map->pair[map->cur_num].index = map->cur_num;
++    map->cur_num++;
++    return 0;
++}
++
++
++static int init_node_verifier(struct node_verifier *nv, int node_num)
++{
++    nv->nodes_map_count = calloc(node_num, sizeof(int));
++    if (nv->nodes_map_count == NULL) {
++        etmemd_log(ETMEMD_LOG_ERR, "alloc memroy for nodes_map_count failed\n");
++        return -1;
++    }
++
++    nv->node_num = node_num;
++    return 0;
++}
++
++static void destroy_node_verifier(struct node_verifier *nv)
++{
++    free(nv->nodes_map_count);
++}
++
++static bool is_node_valid(struct node_verifier *nv, int node)
++{
++    if (node < 0 || node >= nv->node_num) {
++        etmemd_log(ETMEMD_LOG_ERR, "node %d out of range\n", node);
++        return false;
++    }
++
++    if (nv->nodes_map_count[node] != 0) {
++        etmemd_log(ETMEMD_LOG_ERR, "node %d remap\n", node);
++        return false;
++    }
++
++    nv->nodes_map_count[node]++;
++    return true;
++}
++
++static bool has_node_unmap(struct node_verifier *nv)
++{
++    int i;
++    bool ret = false;
++
++    for (i = 0; i < nv->node_num; i++) {
++        if (nv->nodes_map_count[i] == 0) {
++            etmemd_log(ETMEMD_LOG_ERR, "unmap node %d\n", i);
++            ret = true;
++        }
++    }
++
++    return ret;
++}
++
++static void clear_task_params(struct cslide_task_params *params)
++{
++    if (params->vmflags_str != NULL) {
++        free(params->vmflags_str);
++        params->vmflags_str = NULL;
++    }
++    if (params->vmflags_array != NULL) {
++        free(params->vmflags_array);
++        params->vmflags_array = NULL;
++    }
++}
++
++static struct cslide_pid_params *alloc_pid_params(struct cslide_eng_params *eng_params)
++{
++    int i;
++    struct cslide_pid_params *params = calloc(1, sizeof(struct cslide_pid_params));
++    int count = eng_params->loop;
++    int pair_num = eng_params->node_map.cur_num;
++    int node_num = eng_params->mem.node_num;
++
++    if (params == NULL) {
++        etmemd_log(ETMEMD_LOG_ERR, "malloc cslide pid params fail\n");
++        return NULL;
++    }
++    params->count_page_refs = malloc(sizeof(struct count_page_refs) * (count + 1));
++    if (params->count_page_refs == NULL) {
++        etmemd_log(ETMEMD_LOG_ERR, "malloc counted page_refs fail\n");
++        goto free_params;
++    }
++
++    for (i = 0; i <= count; i++) {
++        if (init_count_page_refs(&params->count_page_refs[i], node_num) != 0) {
++            etmemd_log(ETMEMD_LOG_ERR, "init counted page_refs fail\n");
++            goto free_count_page_refs;
++        }
++    }
++
++    params->count = count;
++    params->memory_grade = calloc(pair_num, sizeof(struct memory_grade));
++    if (params->memory_grade == NULL) {
++        etmemd_log(ETMEMD_LOG_ERR, "alloc memory_grade fail\n");
++        goto free_count_page_refs;
++    }
++
++    params->node_pages_info = calloc(node_num, sizeof(struct node_pages_info));
++    if (params->node_pages_info == NULL) {
++        etmemd_log(ETMEMD_LOG_ERR, "alloc pages info fail\n");
++        goto free_memory_grade;
++    }
++    return params;
++
++free_memory_grade:
++    free(params->memory_grade);
++    params->memory_grade = NULL;
++free_count_page_refs:
++    for (i--; i >= 0; i--) {
++        destroy_count_page_refs(&params->count_page_refs[i]);
++    }
++    free(params->count_page_refs);
++    params->count_page_refs = NULL;
++free_params:
++    free(params);
++    params = NULL;
++    return NULL;
++}
++
++static void free_pid_params(struct cslide_pid_params *params)
++{
++    int count = params->count;
++    int i;
++
++    free(params->node_pages_info);
++    params->node_pages_info = NULL;
++    free(params->memory_grade);
++    params->memory_grade = NULL;
++    for (i = 0; i <= count; i++) {
++        destroy_count_page_refs(&params->count_page_refs[i]);
++    }
++    free(params->count_page_refs);
++    params->count_page_refs = NULL;
++    if (params->task_params != NULL) {
++        clear_task_params(params->task_params);
++        free(params->task_params);
++        params->task_params = NULL;
++    }
++    free(params);
++}
++
++static void clean_pid_param(struct cslide_pid_params *pid_params)
++{
++    struct cslide_eng_params *eng_params = pid_params->eng_params;
++    int pair_num = eng_params->node_map.cur_num;
++    int i;
++
++    for (i = 0; i < pair_num; i++) {
++        clean_page_refs_unexpected(&pid_params->memory_grade[i].hot_pages);
++        clean_page_refs_unexpected(&pid_params->memory_grade[i].cold_pages);
++    }
++    for (i = 0; i <= pid_params->count; i++) {
++        clean_count_page_refs(&pid_params->count_page_refs[i]);
++    }
++}
++
++static void destroy_factory(struct cslide_params_factory *factory)
++{
++    pthread_mutex_destroy(&factory->mtx);
++}
++
++static int init_factory(struct cslide_params_factory *factory)
++{
++    return pthread_mutex_init(&factory->mtx, NULL);
++}
++
++static void factory_add_pid_params(struct cslide_params_factory *factory, struct cslide_pid_params *params)
++{
++    enum pid_param_state state = params->state;
++    params->state = STATE_WORKING;
++
++    if (state == STATE_NONE) {
++        pthread_mutex_lock(&factory->mtx);
++        params->next = factory->to_add_head;
++        factory->to_add_head = params;
++        if (factory->to_add_tail == NULL) {
++            factory->to_add_tail = params;
++        }
++        pthread_mutex_unlock(&factory->mtx);
++    }
++}
++
++static void factory_remove_pid_params(struct cslide_params_factory *factory, struct cslide_pid_params *params)
++{
++    params->state = STATE_REMOVE;
++}
++
++static void factory_free_pid_params(struct cslide_params_factory *factory, struct cslide_pid_params *params)
++{
++    params->state = STATE_FREE;
++}
++
++static void next_working_params(struct cslide_pid_params **params)
++{
++    while (*params != NULL && (*params)->state != STATE_WORKING) {
++        *params = (*params)->next;
++    }
++}
++
++/* add and free operations will take effect here */
++static void factory_update_pid_params(struct cslide_params_factory *factory)
++{
++    struct cslide_pid_params **prev = NULL;
++    struct cslide_pid_params *iter = NULL;
++    struct cslide_pid_params *to_add_head = NULL;
++    struct cslide_pid_params *to_add_tail = NULL;
++
++    /* get new added params first */
++    pthread_mutex_lock(&factory->mtx);
++    to_add_head = factory->to_add_head;
++    to_add_tail = factory->to_add_tail;
++    factory->to_add_head = NULL;
++    factory->to_add_tail = NULL;
++    pthread_mutex_unlock(&factory->mtx);
++
++    if (to_add_head != NULL) {
++        to_add_tail->next = factory->working_head;
++        factory->working_head = to_add_head;
++    }
++
++    /* clear the freed params */
++    prev = &factory->working_head;
++    for (iter = *prev; iter != NULL; iter = *prev) {
++        if (iter->state != STATE_FREE) {
++            prev = &(iter->next);
++            continue;
++        }
++        *prev = iter->next;
++        iter->next = NULL;
++        free_pid_params(iter);
++    }
++}
++
++static bool factory_working_empty(struct cslide_params_factory *factory)
++{
++    struct cslide_pid_params *pid_params = NULL;
++
++    factory_foreach_pid_params(pid_params, factory) {
++        if (pid_params->state == STATE_WORKING) {
++            return false;
++        }
++    }
++    return true;
++}
++
++static struct page_refs *next_vma_pf(struct cslide_pid_params *params, int *cur)
++{
++    int vma_pf_num = params->vmas->vma_cnt;
++    struct vma_pf *vma_pf = params->vma_pf;
++    struct page_refs *pf = NULL;
++
++    while (*cur < vma_pf_num) {
++        pf = vma_pf[*cur].page_refs;
++        vma_pf[*cur].page_refs = NULL;
++        (*cur)++;
++        if (pf != NULL) {
++            break;
++        }
++    }
++    return pf;
++}
++
++static int cslide_count_node_pfs(struct cslide_pid_params *params)
++{
++    struct page_refs *page_refs = NULL;
++    struct page_refs *last = NULL;
++    unsigned int pid = params->pid;
++    int batch_size = BATCHSIZE;
++    void **pages = NULL;
++    int *status = NULL;
++    int actual_num = 0;
++    int ret = -1;
++    int vma_i = 0;
++
++    if (params->vmas == NULL || params->vma_pf == NULL) {
++        return 0;
++    }
++
++    status = malloc(sizeof(int) * batch_size);
++    if (status == NULL) {
++        etmemd_log(ETMEMD_LOG_ERR, "malloc status fail\n");
++        return -1;
++    }
++
++    pages = malloc(sizeof(void *) * batch_size);
++    if (pages == NULL) {
++        etmemd_log(ETMEMD_LOG_ERR, "malloc pages fail\n");
++        goto free_status;
++    }
++
++    page_refs = next_vma_pf(params, &vma_i);
++    last = page_refs;
++    while (page_refs != NULL) {
++        pages[actual_num++] = (void *)page_refs->addr;
++        if (page_refs->next == NULL) {
++            page_refs->next = next_vma_pf(params, &vma_i);
++        }
++        if (actual_num == batch_size || page_refs->next == NULL) {
++            if (move_pages(pid, actual_num, pages, NULL, status, MPOL_MF_MOVE_ALL) != 0) {
++                etmemd_log(ETMEMD_LOG_ERR, "get page refs numa node fail\n");
++                goto free_pages;
++            }
++            insert_count_pfs(params->count_page_refs, last, status, actual_num);
++            last = page_refs->next;
++            actual_num = 0;
++        }
++        page_refs = page_refs->next;
++    }
++    setup_count_pfs_tail(params->count_page_refs, params->count);
++    ret = 0;
++
++free_pages:
++    free(pages);
++    pages = NULL;
++free_status:
++    free(status);
++    status = NULL;
++    return ret;
++}
++
++static inline bool cap_avail(struct ctrl_cap *cap)
++{
++    return cap->used < cap->cap;
++}
++
++/* return true if cap is still available */
++static inline bool cap_cost(struct ctrl_cap *cap, long long *cost)
++{
++    if (*cost < cap->cap - cap->used) {
++        cap->used += *cost;
++        return true;
++    }
++
++    *cost = cap->cap - cap->used;
++    cap->used = cap->cap;
++    return false;
++}
++
++/* return true if node can move hot pages */
++static bool node_cal_hot_can_move(struct node_ctrl *node_ctrl)
++{
++    long long can_move;
++
++    if (node_ctrl->quota < node_ctrl->free) {
++        can_move = node_ctrl->quota;
++    } else {
++        can_move = node_ctrl->free + (node_ctrl->quota - node_ctrl->free) / 2;
++        if (can_move > node_ctrl->free + node_ctrl->cold_free) {
++            can_move = node_ctrl->free + node_ctrl->cold_free;
++        }
++    }
++
++    if (can_move > node_ctrl->total) {
++        can_move = node_ctrl->total;
++    }
++    node_ctrl->hot_move_cap.cap = can_move;
++    return can_move > 0;
++}
++
++static inline bool node_can_move_hot(struct node_ctrl *node_ctrl)
++{
++    return cap_avail(&node_ctrl->hot_move_cap);
++}
++
++static inline bool node_move_hot(struct node_ctrl *node_ctrl, long long *target)
++{
++    return cap_cost(&node_ctrl->hot_move_cap, target);
++}
++
++static void node_update_hot_move(struct node_ctrl *node_ctrl)
++{
++    long long hot_move = node_ctrl->hot_move_cap.used;
++
++    if (hot_move > node_ctrl->free) {
++        node_ctrl->cold_replaced += hot_move - node_ctrl->free;
++        node_ctrl->quota -= node_ctrl->free + (hot_move - node_ctrl->free) * 2;
++        node_ctrl->cold_free += node_ctrl->free;
++        node_ctrl->free = 0;
++    } else {
++        node_ctrl->free -= hot_move;
++        node_ctrl->quota -= hot_move;
++        node_ctrl->cold_free += hot_move;
++    }
++}
++
++/* return true if node can prefetch hot pages */
++static bool node_cal_hot_can_prefetch(struct node_ctrl *node_ctrl)
++{
++    long long can_prefetch;
++
++    if (node_ctrl->free <= node_ctrl->reserve) {
++        can_prefetch = 0;
++        goto exit;
++    }
++
++    can_prefetch = node_ctrl->free - node_ctrl->reserve;
++    if (can_prefetch > node_ctrl->quota) {
++        can_prefetch = node_ctrl->quota;
++    }
++
++exit:
++    node_ctrl->hot_prefetch_cap.cap = can_prefetch;
++    return can_prefetch > 0;
++}
++
++static inline bool node_can_prefetch_hot(struct node_ctrl *node_ctrl)
++{
++    return cap_avail(&node_ctrl->hot_prefetch_cap);
++}
++
++static inline bool node_prefetch_hot(struct node_ctrl *node_ctrl, long long *target)
++{
++    return cap_cost(&node_ctrl->hot_prefetch_cap, target);
++}
++
++static void node_update_hot_prefetch(struct node_ctrl *node_ctrl)
++{
++    long long hot_prefetch = node_ctrl->hot_prefetch_cap.used;
++
++    node_ctrl->free -= hot_prefetch;
++    node_ctrl->quota -= hot_prefetch;
++    node_ctrl->cold_free += hot_prefetch;
++}
++
++static bool node_cal_cold_can_move(struct node_ctrl *node_ctrl)
++{
++    long long can_move;
++
++    can_move = node_ctrl->quota < node_ctrl->reserve - node_ctrl->free ? node_ctrl->quota : node_ctrl->reserve - node_ctrl->free;
++    if (can_move > node_ctrl->cold_free) {
++        can_move = node_ctrl->cold_free;
++    }
++    if (can_move < 0) {
++        can_move = 0;
++    }
++
++    node_ctrl->cold_move_cap.cap = can_move + node_ctrl->cold_replaced;
++    return node_ctrl->cold_move_cap.cap > 0;
++}
++
++static inline bool node_can_move_cold(struct node_ctrl *node_ctrl)
++{
++    return cap_avail(&node_ctrl->cold_move_cap);
++}
++
++/* return true if still can move cold pages */
++static inline bool node_move_cold(struct node_ctrl *node_ctrl, long long *target)
++{
++    return cap_cost(&node_ctrl->cold_move_cap, target);
++}
++
++static int init_flow_ctrl(struct flow_ctrl *ctrl, struct sys_mem *sys_mem, struct node_map *node_map, long long quota, long long reserve)
++{
++    struct node_pair *pair = NULL;
++    struct node_ctrl *tmp = NULL;
++    int i;
++
++    ctrl->node_ctrl = calloc(node_map->cur_num, sizeof(struct node_ctrl));
++    if (ctrl->node_ctrl == NULL) {
++        etmemd_log(ETMEMD_LOG_ERR, "alloc memory for node_ctrl fail\n");
++        return -1;
++    }
++
++    ctrl->pair_num = node_map->cur_num;
++    ctrl->hot_enough = 0;
++    ctrl->cold_enough = 0;
++    ctrl->prefetch_enough = 0;
++    for (i = 0; i < ctrl->pair_num; i++) {
++        pair = &node_map->pair[i];
++        tmp = &ctrl->node_ctrl[i];
++        tmp->cold_free = sys_mem->node_mem[pair->cold_node].huge_free;
++        tmp->free = sys_mem->node_mem[pair->hot_node].huge_free;
++        tmp->total = sys_mem->node_mem[pair->hot_node].huge_total;
++        tmp->quota = quota;
++        tmp->reserve = reserve;
++    }
++    return 0;
++}
++
++static void flow_cal_hot_can_move(struct flow_ctrl *ctrl)
++{
++    int i;
++
++    for (i = 0; i < ctrl->pair_num; i++) {
++        if (!node_cal_hot_can_move(&ctrl->node_ctrl[i])) {
++            ctrl->hot_enough++;
++        }
++    }
++}
++
++static inline bool is_hot_enough(struct flow_ctrl *ctrl)
++{
++    return ctrl->hot_enough == ctrl->pair_num;
++}
++
++static long long ctrl_hot_move(struct flow_ctrl *ctrl, long long target, int node)
++{
++    struct node_ctrl *node_ctrl = &ctrl->node_ctrl[node];
++
++    if (!node_can_move_hot(node_ctrl)) {
++        return 0;
++    }
++
++    if (!node_move_hot(node_ctrl, &target)) {
++        ctrl->hot_enough++;
++    }
++
++    return target;
++}
++
++static void flow_cal_hot_can_prefetch(struct flow_ctrl *ctrl)
++{
++    int i;
++
++    for (i = 0; i < ctrl->pair_num; i++) {
++        node_update_hot_move(&ctrl->node_ctrl[i]);
++        if (!node_cal_hot_can_prefetch(&ctrl->node_ctrl[i])) {
++            ctrl->prefetch_enough++;
++        }
++    }
++}
++
++static inline bool is_prefetch_enough(struct flow_ctrl *ctrl)
++{
++    return ctrl->prefetch_enough == ctrl->pair_num;
++}
++
++static long long ctrl_prefetch_hot(struct flow_ctrl *ctrl, long long target, int node)
++{
++    struct node_ctrl *node_ctrl = &ctrl->node_ctrl[node];
++
++    if (!node_can_prefetch_hot(node_ctrl)) {
++        return 0;
++    }
++
++    if (!node_prefetch_hot(node_ctrl, &target)) {
++        ctrl->prefetch_enough++;
++    }
++
++    return target;
++}
++
++static void flow_cal_cold_can_move(struct flow_ctrl *ctrl)
++{
++    int i;
++
++    for (i = 0; i < ctrl->pair_num; i++) {
++        node_update_hot_prefetch(&ctrl->node_ctrl[i]);
++        if (!node_cal_cold_can_move(&ctrl->node_ctrl[i])) {
++            ctrl->cold_enough++;
++        }
++    }
++}
++
++static inline bool is_cold_enough(struct flow_ctrl *ctrl)
++{
++    return ctrl->cold_enough == ctrl->pair_num;
++}
++
++static long long ctrl_cold_move(struct flow_ctrl *ctrl, long long target, int node)
++{
++    struct node_ctrl *node_ctrl = &ctrl->node_ctrl[node];
++
++    if (!node_can_move_cold(node_ctrl)) {
++        return 0;
++    }
++
++    if (!node_move_cold(node_ctrl, &target)) {
++        ctrl->cold_enough++;
++    }
++
++    return target;
++}
++
++static void destroy_flow_ctrl(struct flow_ctrl *ctrl)
++{
++    free(ctrl->node_ctrl);
++    ctrl->node_ctrl = NULL;
++}
++
++static void do_filter(struct page_filter *filter, struct cslide_eng_params *eng_params)
++{
++    struct cslide_pid_params *params = NULL;
++    struct count_page_refs *cpf = NULL;
++    struct memory_grade *memory_grade = NULL;
++    struct node_pair *pair = NULL;
++    int pair_num = eng_params->node_map.cur_num;
++    int i, j;
++
++    filter->flow_cal_func(filter->ctrl);
++    if (filter->flow_enough(filter->ctrl)) {
++        return;
++    }
++
++    for (i = filter->count_start; i != filter->count_end; i += filter->count_step) {
++        factory_foreach_working_pid_params(params, &eng_params->factory) {
++            cpf = &params->count_page_refs[i];
++            for (j = 0; j < pair_num; j++) {
++                pair = &eng_params->node_map.pair[j];
++                memory_grade = &params->memory_grade[j];
++                filter->filter_policy(filter, pair, cpf, memory_grade);
++                if (filter->flow_enough(filter->ctrl)) {
++                    return;
++                }
++            }
++        }
++    }
++}
++
++static void to_hot_policy(struct page_filter *filter, struct node_pair *pair, struct count_page_refs *cpf, struct memory_grade *memory_grade)
++{
++    long long can_move;
++    struct node_page_refs *npf = &cpf->node_pfs[pair->cold_node];
++
++    can_move = filter->flow_move_func(filter->ctrl, npf->size, pair->index);
++    move_npf_to_list(npf, &memory_grade->hot_pages, can_move);
++}
++
++static void to_cold_policy(struct page_filter *filter, struct node_pair *pair, struct count_page_refs *cpf, struct memory_grade *memory_grade)
++{
++    long long can_move;
++    struct node_page_refs *npf = &cpf->node_pfs[pair->hot_node];
++
++    can_move = filter->flow_move_func(filter->ctrl, npf->size, pair->index);
++    move_npf_to_list(npf, &memory_grade->cold_pages, can_move);
++}
++
++static void move_hot_pages(struct cslide_eng_params *eng_params, struct flow_ctrl *ctrl)
++{
++    struct page_filter filter;
++    filter.flow_cal_func = flow_cal_hot_can_move;
++    filter.flow_move_func = ctrl_hot_move;
++    filter.flow_enough = is_hot_enough;
++    filter.filter_policy = to_hot_policy;
++    filter.ctrl = ctrl;
++    filter.count_start = eng_params->loop;
++    filter.count_end = eng_params->hot_threshold - 1;
++    filter.count_step = -1;
++    do_filter(&filter, eng_params);
++}
++
++static void prefetch_hot_pages(struct cslide_eng_params *eng_params, struct flow_ctrl *ctrl)
++{
++    struct page_filter filter;
++    filter.flow_cal_func = flow_cal_hot_can_prefetch;
++    filter.flow_move_func = ctrl_prefetch_hot;
++    filter.flow_enough = is_prefetch_enough;
++    filter.filter_policy = to_hot_policy;
++    filter.ctrl = ctrl;
++    filter.count_start = eng_params->hot_threshold - 1;
++    filter.count_end = -1;
++    filter.count_step = -1;
++    do_filter(&filter, eng_params);
++}
++
++static void move_cold_pages(struct cslide_eng_params *eng_params, struct flow_ctrl *ctrl)
++{
++    struct page_filter filter;
++    filter.flow_cal_func = flow_cal_cold_can_move;
++    filter.flow_move_func = ctrl_cold_move;
++    filter.flow_enough = is_cold_enough;
++    filter.filter_policy = to_cold_policy;
++    filter.ctrl = ctrl;
++    filter.count_start = 0;
++    filter.count_end = eng_params->hot_threshold;
++    filter.count_step = 1;
++    do_filter(&filter, eng_params);
++}
++
++static void cslide_filter_pfs(struct cslide_eng_params *eng_params)
++{
++    struct flow_ctrl ctrl;
++    long long quota = (long long)eng_params->mig_quota * HUGE_1M_SIZE;
++    long long reserve = (long long)eng_params->hot_reserve * HUGE_1M_SIZE;
++
++    if (init_flow_ctrl(&ctrl, &eng_params->mem, &eng_params->node_map, quota, reserve) != 0) {
++        etmemd_log(ETMEMD_LOG_ERR, "init_flow_ctrl fail\n");
++        return;
++    }
++
++    move_hot_pages(eng_params, &ctrl);
++    prefetch_hot_pages(eng_params, &ctrl);
++    move_cold_pages(eng_params, &ctrl);
++
++    destroy_flow_ctrl(&ctrl);
++}
++
++static int cslide_policy(struct cslide_eng_params *eng_params)
++{
++    struct cslide_pid_params *pid_params = NULL;
++    int ret;
++
++    factory_foreach_working_pid_params(pid_params, &eng_params->factory) {
++        ret = cslide_count_node_pfs(pid_params);
++        if (ret != 0) {
++            etmemd_log(ETMEMD_LOG_ERR, "count node page refs fail\n");
++            return ret;
++        }
++    }
++
++    cslide_filter_pfs(eng_params);
++    return 0;
++}
++
++static void sort_add_vma_pf(struct vma_pf *vma_pf)
++{
++    struct vma_pf **iter = &g_share_vma_head;
++
++    for (; *iter != NULL && (*iter)->vma->inode < vma_pf->vma->inode; iter = &((*iter)->next)) {
++        ;
++    }
++
++    vma_pf->next = *iter;
++    *iter = vma_pf;
++}
++
++static bool is_share(struct vma_pf *vma_pf)
++{
++    struct vma *vma = vma_pf->vma;
++
++    if (vma->inode != 0 && vma->stat[VMA_STAT_MAY_SHARE]) {
++        return true;
++    }
++
++    return false;
++}
++
++static inline uint64_t to_offset(struct page_offset *po)
++{
++    return po->page_refs->addr + po->to_offset;
++}
++
++static int page_offset_cmp(const void *a, const void *b)
++{
++    struct page_offset *l = (struct page_offset *)a;
++    struct page_offset *r = (struct page_offset *)b;
++
++    return to_offset(l) - to_offset(r);
++}
++
++static inline void init_merge_po(struct page_offset *to_merge_po, int count)
++{
++    qsort(to_merge_po, count, sizeof(struct page_offset), page_offset_cmp);
++}
++
++static void next_po(struct page_offset *to_merge_po, int *count)
++{
++    struct page_offset *po = to_merge_po;
++    struct page_offset tmp;
++    uint64_t offset;
++    int i;
++
++    po->page_refs = po->page_refs->next;
++    if (po->page_refs == NULL) {
++        for (i = 1; i < *count; i++) {
++            to_merge_po[i - 1] = to_merge_po[i];
++        }
++        (*count)--;
++        return;
++    }
++
++    tmp = *po;
++    offset = to_offset(po);
++    for (i = 1; i < *count; i++) {
++        if (to_offset(&to_merge_po[i]) >= offset) {
++            break;
++        }
++        to_merge_po[i - 1] = to_merge_po[i];
++    }
++    to_merge_po[i - 1] = tmp;
++}
++
++static void merge_share_pfs(struct page_refs **share_pfs, int share_pfs_num)
++{
++    int max_count = -1;
++    struct page_refs *max_pf = NULL;
++    int i;
++
++    /* only keep one page_refs with max count */
++    for (i = 0; i < share_pfs_num; i++) {
++        if (share_pfs[i]->count > max_count) {
++            max_pf = share_pfs[i];
++            max_count = share_pfs[i]->count;
++        }
++        share_pfs[i]->count = -1;
++    }
++    max_pf->count = max_count;
++}
++
++static int do_merge_vma_pf(struct vma_pf *vma_pf, int count)
++{
++    struct page_refs **share_pfs = NULL;
++    struct page_offset *to_merge_po = NULL;
++    struct page_offset *iter = NULL;
++    int share_pfs_num;
++    uint64_t cur_offset = 0;
++    uint64_t next_offset;
++    int i;
++
++    share_pfs = calloc(count, sizeof(struct page_refs *));
++    if (share_pfs == NULL) {
++        etmemd_log(ETMEMD_LOG_ERR, "alloc share_pfs fail\n");
++        return -1;
++    }
++
++    to_merge_po = calloc(count, sizeof(struct page_offset));
++    if (to_merge_po == NULL) {
++        etmemd_log(ETMEMD_LOG_ERR, "alloc iter_pfs fail\n");
++        free(share_pfs);
++        return -1;
++    }
++
++    for (i = 0; i < count; i++) {
++        to_merge_po[i].page_refs = vma_pf->page_refs;
++        to_merge_po[i].to_offset = vma_pf->vma->offset - vma_pf->vma->start;
++        vma_pf = vma_pf->next;
++    }
++
++    init_merge_po(to_merge_po, count);
++    iter = to_merge_po;
++    share_pfs[0] = iter->page_refs;
++    share_pfs_num = 1;
++    cur_offset = to_offset(iter);
++
++    for (next_po(to_merge_po, &count); count > 0; next_po(to_merge_po, &count)) {
++        iter = to_merge_po;
++        next_offset = to_offset(iter);
++        if (next_offset == cur_offset) {
++            share_pfs[share_pfs_num] = iter->page_refs;
++            share_pfs_num++;
++        } else {
++            if (share_pfs_num > 1) {
++                merge_share_pfs(share_pfs, share_pfs_num);
++            }
++            share_pfs[0] = iter->page_refs;
++            share_pfs_num = 1;
++            cur_offset = next_offset;
++        }
++
++    }
++    if (share_pfs_num > 1) {
++        merge_share_pfs(share_pfs, share_pfs_num);
++    }
++
++    free(to_merge_po);
++    free(share_pfs);
++    return 0;
++}
++
++static int cslide_merge_share_vmas(struct cslide_eng_params *eng_params)
++{
++    struct cslide_pid_params *pid_params = NULL;
++    struct vma_pf *vma_pf = NULL;
++    struct vma_pf *iter = NULL;
++    int count;
++    uint64_t i;
++    
++    factory_foreach_working_pid_params(pid_params, &eng_params->factory) {
++        vma_pf = pid_params->vma_pf;
++        if (vma_pf == NULL) {
++            continue;
++        }
++        for (i = 0; i < pid_params->vmas->vma_cnt; i++) {
++            if (is_share(&vma_pf[i])) {
++                sort_add_vma_pf(&vma_pf[i]);
++            }
++        }
++    }
++
++    vma_pf = g_share_vma_head;
++    while (vma_pf != NULL) {
++        for (iter = vma_pf->next, count = 1; iter != NULL && iter->vma->inode == vma_pf->vma->inode; iter = iter->next, count++) {
++            ;
++        }
++        if (count > 1) {
++            if (do_merge_vma_pf(vma_pf, count) != 0) {
++                etmemd_log(ETMEMD_LOG_ERR, "merge vma with inode %lld fail\n", vma_pf->vma->inode);
++                g_share_vma_head = NULL;
++                return -1;
++            }
++        }
++        vma_pf = iter;
++    }
++    g_share_vma_head = NULL;
++    return 0;
++}
++
++static int cslide_get_vmas(struct cslide_pid_params *pid_params)
++{
++    struct cslide_task_params *task_params = pid_params->task_params;
++    struct vma *vma = NULL;
++    char pid[PID_STR_MAX_LEN] = {0};
++    uint64_t i;
++
++    if (snprintf_s(pid, PID_STR_MAX_LEN, PID_STR_MAX_LEN - 1, "%u", pid_params->pid) <= 0) {
++        etmemd_log(ETMEMD_LOG_ERR, "sprintf pid %u fail\n", pid_params->pid);
++        return -1;
++    }
++    pid_params->vmas = get_vmas_with_flags(pid, task_params->vmflags_array, task_params->vmflags_num, task_params->anon_only);
++    if (pid_params->vmas == NULL) {
++        etmemd_log(ETMEMD_LOG_ERR, "get vmas for %s fail\n", pid);
++        return -1;
++    }
++
++    pid_params->vma_pf = calloc(pid_params->vmas->vma_cnt, sizeof(struct vma_pf));
++    if (pid_params->vma_pf == NULL) {
++        etmemd_log(ETMEMD_LOG_ERR, "alloc memory for vma_pf fail\n");
++        goto free_vmas;
++    }
++
++    vma = pid_params->vmas->vma_list;
++    for (i = 0; i < pid_params->vmas->vma_cnt; i++) {
++        pid_params->vma_pf[i].vma = vma;
++        vma = vma->next;
++    }
++    return 0;
++
++free_vmas:
++    free_vmas(pid_params->vmas);
++    pid_params->vmas = NULL;
++    return -1;
++}
++
++static void cslide_free_vmas(struct cslide_pid_params *params)
++{
++    uint64_t i;
++
++    if (params->vmas == NULL) {
++        return;
++    }
++
++    for (i = 0; i < params->vmas->vma_cnt; i++) {
++        clean_page_refs_unexpected(&params->vma_pf[i].page_refs);
++    }
++    free(params->vma_pf);
++    params->vma_pf = NULL;
++    free_vmas(params->vmas);
++    params->vmas = NULL;
++}
++
++static int cslide_scan_vmas(struct cslide_pid_params *params)
++{
++    char pid[PID_STR_MAX_LEN] = {0};
++    struct vmas *vmas = params->vmas;
++    struct vma *vma = NULL;
++    struct vma_pf *vma_pf = NULL;
++    FILE *scan_fp = NULL;
++    struct walk_address walk_address;
++    uint64_t i;
++    int fd;
++
++    if (snprintf_s(pid, PID_STR_MAX_LEN, PID_STR_MAX_LEN - 1, "%u", params->pid) <= 0) {
++        etmemd_log(ETMEMD_LOG_ERR, "snpintf pid %u fail\n", params->pid);
++        return -1;
++    }
++
++    scan_fp = etmemd_get_proc_file(pid, IDLE_SCAN_FILE, SCAN_AS_HUGE, "r");
++    if (scan_fp == NULL) {
++        etmemd_log(ETMEMD_LOG_ERR, "open %s file for pid %u fail\n", IDLE_SCAN_FILE, params->pid);
++        params->vma_pf = NULL;
++        return -1;
++    }
++
++    fd = fileno(scan_fp);
++    if (fd == -1) {
++        fclose(scan_fp);
++        etmemd_log(ETMEMD_LOG_ERR, "fileno file fail for %s\n", IDLE_SCAN_FILE);
++        return -1;
++    }
++    for (i = 0; i < vmas->vma_cnt; i++) {
++        vma_pf = &params->vma_pf[i];
++        vma = vma_pf->vma;
++        walk_address.walk_start = vma->start;
++        walk_address.walk_end = vma->end;
++        if (walk_vmas(fd, &walk_address, &vma_pf->page_refs, NULL) == NULL) {
++            etmemd_log(ETMEMD_LOG_ERR, "scan vma start %llu end %llu fail\n", vma->start, vma->end);
++            cslide_free_vmas(params);
++            fclose(scan_fp);
++            return -1;
++        }
++    }
++
++    fclose(scan_fp);
++    return 0;
++}
++
++static int cslide_do_scan(struct cslide_eng_params *eng_params)
++{
++    struct cslide_pid_params *iter = NULL;
++    int i;
++
++    factory_foreach_working_pid_params(iter, &eng_params->factory) {
++        if (cslide_get_vmas(iter) != 0) {
++            etmemd_log(ETMEMD_LOG_ERR, "cslide get vmas fail\n");
++            continue;
++        }
++    }
++
++    for (i = 0; i < eng_params->loop; i++) {
++        factory_foreach_working_pid_params(iter, &eng_params->factory) {
++            if (iter->vmas == NULL) {
++                continue;
++            }
++            if (cslide_scan_vmas(iter) != 0) {
++                etmemd_log(ETMEMD_LOG_ERR, "cslide scan vmas fail\n");
++                continue;
++            }
++        }
++        sleep(eng_params->sleep);
++    }
++
++    if (cslide_merge_share_vmas(eng_params) != 0) {
++        etmemd_log(ETMEMD_LOG_ERR, "cslide merge share vams fail\n");
++        return -1;
++    }
++
++    return 0;
++}
++
++static int do_migrate_pages(unsigned int pid, struct page_refs *page_refs, int node)
++{
++    int batch_size = BATCHSIZE;
++    int ret = -1;
++    void **pages = NULL;
++    int *nodes = NULL;
++    int *status = NULL;
++    int actual_num = 0;
++
++    if (page_refs == NULL) {
++        return 0;
++    }
++
++    nodes = malloc(sizeof(int) * batch_size);
++    if (nodes == NULL) {
++        etmemd_log(ETMEMD_LOG_ERR, "malloc nodes fail\n");
++        return -1;
++    }
++
++    status = malloc(sizeof(int) * batch_size);
++    if (status == NULL) {
++        etmemd_log(ETMEMD_LOG_ERR, "malloc status fail\n");
++        goto free_nodes;
++    }
++
++    pages = malloc(sizeof(void *) * batch_size);
++    if (pages == NULL) {
++        etmemd_log(ETMEMD_LOG_ERR, "malloc pages fail\n");
++        goto free_status;
++    }
++    while (page_refs != NULL) {
++        pages[actual_num] = (void *)page_refs->addr;
++        nodes[actual_num] = node;
++        actual_num++;
++        page_refs = page_refs->next;
++        if (actual_num == batch_size || page_refs == NULL) {
++            ret = move_pages(pid, actual_num, pages, nodes, status, MPOL_MF_MOVE_ALL);
++            actual_num = 0;
++            if (ret != 0) {
++                etmemd_log(ETMEMD_LOG_ERR, "task %d move_pages fail with %d errno %d\n", pid, ret, errno);
++                continue;
++            }
++        }
++    }
++
++    free(pages);
++    pages = NULL;
++free_status:
++    free(status);
++    status = NULL;
++free_nodes:
++    free(nodes);
++    nodes = NULL;
++    return ret;
++}
++
++static int migrate_single_task(unsigned int pid, const struct memory_grade *memory_grade, int hot_node, int cold_node)
++{
++    int ret = -1;
++
++    if (do_migrate_pages(pid, memory_grade->cold_pages, cold_node) != 0) {
++        etmemd_log(ETMEMD_LOG_ERR, "migrate cold pages fail\n");
++        return ret;
++    }
++
++    if (do_migrate_pages(pid, memory_grade->hot_pages, hot_node) != 0) {
++        etmemd_log(ETMEMD_LOG_ERR, "migrate hot pages fail\n");
++        return ret;
++    }
++
++    ret = 0;
++    return ret;
++}
++
++static int cslide_do_migrate(struct cslide_eng_params *eng_params)
++{
++    struct cslide_pid_params *iter = NULL;
++    struct node_pair *pair = NULL;
++    int bind_node, i;
++
++    factory_foreach_working_pid_params(iter, &eng_params->factory) {
++        for (i = 0; i < eng_params->node_map.cur_num; i++) {
++            pair = &eng_params->node_map.pair[i];
++            bind_node = pair->hot_node < pair->cold_node ? pair->hot_node : pair->cold_node;
++            if (numa_run_on_node(bind_node) != 0) {
++                etmemd_log(ETMEMD_LOG_ERR, "fail to run on node %d to migrate memory\n", bind_node);
++            }
++            migrate_single_task(iter->pid, &iter->memory_grade[i], pair->hot_node, pair->cold_node);
++        }
++    }
++    if (numa_run_on_node(-1) != 0) {
++        etmemd_log(ETMEMD_LOG_ERR, "fail to run on all node after migrate memory\n");
++    }
++    return 0;
++}
++
++static bool is_node_empty(struct node_mem *mem)
++{
++    return mem->huge_free == mem->huge_total;
++}
++
++static bool is_all_cold_node_empty(struct cslide_eng_params *eng_params)
++{
++    struct sys_mem *mem = &eng_params->mem;
++    struct node_pair *pair = NULL;
++    int i;
++
++    for (i = 0; i < eng_params->node_map.cur_num; i++) {
++        pair = &eng_params->node_map.pair[i];
++        if (!is_node_empty(&mem->node_mem[pair->cold_node])) {
++            return false;
++        }
++    }
++    return true;
++}
++
++static inline bool is_busy(int node_watermark, long long total, long long free)
++{
++    return free * TO_PCT / total < node_watermark;
++}
++
++static bool is_node_busy(int node_watermark, struct node_mem *mem)
++{
++    return is_busy(node_watermark, mem->huge_total, mem->huge_free);
++}
++
++static bool is_any_hot_node_busy(struct cslide_eng_params *eng_params)
++{
++    struct sys_mem *mem = &eng_params->mem;
++    struct node_pair *pair = NULL;
++    int node_watermark = eng_params->node_watermark;
++    int i;
++
++    for (i = 0; i < eng_params->node_map.cur_num; i++) {
++        pair = &eng_params->node_map.pair[i];
++        if (is_node_busy(node_watermark, &mem->node_mem[pair->hot_node])) {
++            return true;
++        }
++    }
++
++    return false;
++}
++
++static bool need_migrate(struct cslide_eng_params *eng_params)
++{
++    if (!is_all_cold_node_empty(eng_params)) {
++        return true;
++    }
++    if (is_any_hot_node_busy(eng_params)) {
++        return true;
++    }
++
++    return false;
++}
++
++static void get_node_pages_info(struct cslide_pid_params *pid_params)
++{
++    struct cslide_eng_params *eng_params = pid_params->eng_params;
++    int n, c;
++    int t = eng_params->hot_threshold;
++    int count = pid_params->count;
++    int actual_t = t > count ? count + 1 : t;
++    int node_num = pid_params->count_page_refs->node_num;
++    struct node_pages_info *info = pid_params->node_pages_info;
++
++    for (n = 0; n < node_num; n++) {
++        info[n].cold = 0;
++        info[n].hot = 0;
++
++        for (c = 0; c < actual_t; c++) {
++            info[n].cold += pid_params->count_page_refs[c].node_pfs[n].num * 2 * 1024;
++        }
++        for (; c <= count; c++) {
++            info[n].hot += pid_params->count_page_refs[c].node_pfs[n].num * 2 * 1024;
++        }
++    }
++}
++
++static void cslide_stat(struct cslide_eng_params *eng_params)
++{
++    struct cslide_pid_params *iter = NULL;
++
++    pthread_mutex_lock(&eng_params->stat_mtx);
++    factory_foreach_working_pid_params(iter, &eng_params->factory) {
++        get_node_pages_info(iter);
++    }
++    eng_params->stat_time = time(NULL);
++    pthread_mutex_unlock(&eng_params->stat_mtx);
++}
++
++static void cslide_clean_params(struct cslide_eng_params *eng_params)
++{
++    struct cslide_pid_params *iter = NULL;
++
++    factory_foreach_pid_params(iter, &eng_params->factory) {
++        clean_pid_param(iter);
++        cslide_free_vmas(iter);
++    }
++}
++
++static void destroy_cslide_eng_params(struct cslide_eng_params *params)
++{
++    destroy_factory(&params->factory);
++    pthread_mutex_destroy(&params->stat_mtx);
++    destroy_node_map(&params->node_map);
++    destroy_sys_mem(&params->mem);
++}
++
++static int init_cslide_eng_params(struct cslide_eng_params *params)
++{
++    if (init_sys_mem(&params->mem) != 0) {
++        etmemd_log(ETMEMD_LOG_ERR, "init system memory fail\n");
++        return -1;
++    }
++
++    if (init_node_map(&params->node_map, params->mem.node_num) != 0) {
++        etmemd_log(ETMEMD_LOG_ERR, "init_node_map fail\n");
++        goto destroy_sys_mem;
++    }
++
++    if (pthread_mutex_init(&params->stat_mtx, NULL) != 0) {
++        etmemd_log(ETMEMD_LOG_ERR, "init stat mutex fail\n");
++        goto destroy_node_map;
++    }
++
++    if (init_factory(&params->factory) != 0) {
++        etmemd_log(ETMEMD_LOG_ERR, "init params factory fail\n");
++        goto destroy_stat_mtx;
++    }
++
++    return 0;
++
++destroy_stat_mtx:
++    pthread_mutex_destroy(&params->stat_mtx);
++
++destroy_node_map:
++    destroy_node_map(&params->node_map);
++
++destroy_sys_mem:
++    destroy_sys_mem(&params->mem);
++    return -1;
++}
++
++static void *cslide_main(void *arg)
++{
++    struct cslide_eng_params *eng_params = (struct cslide_eng_params *)arg;
++    struct sys_mem *mem = NULL;
++
++    while (true) {
++        factory_update_pid_params(&eng_params->factory);
++        if (eng_params->finish) {
++            etmemd_log(ETMEMD_LOG_DEBUG, "cslide task is stopping...\n");
++            break;
++        }
++        if (factory_working_empty(&eng_params->factory)) {
++            goto next;
++        }
++
++        mem = &eng_params->mem;
++        if (get_sys_mem(mem) != 0) {
++            etmemd_log(ETMEMD_LOG_ERR, "get system meminfo fail\n");
++            goto next;
++        }
++
++        if (cslide_do_scan(eng_params) != 0) {
++            etmemd_log(ETMEMD_LOG_ERR, "cslide_do_scan fail\n");
++            goto next;
++        }
++
++        if (cslide_policy(eng_params) != 0) {
++            etmemd_log(ETMEMD_LOG_ERR, "cslide_policy fail\n");
++            goto next;
++        }
++
++        if (!need_migrate(eng_params)) {
++            etmemd_log(ETMEMD_LOG_DEBUG, "no need to migrate\n");
++            goto next;
++        }
++
++        if (cslide_do_migrate(eng_params) != 0) {
++            etmemd_log(ETMEMD_LOG_ERR, "cslide_do_migrate fail\n");
++            goto next;
++        }
++
++next:
++        cslide_stat(eng_params);
++        sleep(eng_params->interval);
++        cslide_clean_params(eng_params);
++    }
++
++    factory_update_pid_params(&eng_params->factory);
++    destroy_cslide_eng_params(eng_params);
++    free(eng_params);
++    return NULL;
++}
++
++static int cslide_alloc_pid_params(struct engine *eng, struct task_pid **tk_pid)
++{
++    struct cslide_eng_params *eng_params = (struct cslide_eng_params *)eng->params;
++    unsigned pid = (*tk_pid)->pid;
++    struct cslide_pid_params *pid_params = NULL;
++
++    pid_params = alloc_pid_params(eng_params);
++    if (pid_params == NULL) {
++        etmemd_log(ETMEMD_LOG_ERR, "alloc cslide pid params fail\n");
++        return -1;
++    }
++
++    pid_params->pid = pid;
++    pid_params->eng_params = eng_params;
++    pid_params->task_params = (*tk_pid)->tk->params;
++    (*tk_pid)->params = pid_params;
++    return 0;
++}
++
++static void cslide_free_pid_params(struct engine *eng, struct task_pid **tk_pid)
++{
++    struct cslide_eng_params *eng_params = (struct cslide_eng_params *)eng->params;
++
++    if ((*tk_pid)->params != NULL) {
++        /* clear pid params in factory_update_pid_params in cslide_main */
++        factory_free_pid_params(&eng_params->factory, (*tk_pid)->params);
++        (*tk_pid)->params = NULL;
++    }
++}
++
++static int cslide_start_task(struct engine *eng, struct task *tk)
++{
++    struct cslide_eng_params *eng_params = (struct cslide_eng_params *)eng->params;
++    struct task_pid *task_pid = NULL;
++
++    for (task_pid = tk->pids; task_pid != NULL; task_pid = task_pid->next) {
++        factory_add_pid_params(&eng_params->factory, task_pid->params);
++    }
++
++    return 0;
++}
++
++static void cslide_stop_task(struct engine *eng, struct task *tk)
++{
++    struct cslide_eng_params *eng_params = (struct cslide_eng_params *)eng->params;
++    struct task_pid *task_pid = NULL;
++
++    for (task_pid = tk->pids; task_pid != NULL; task_pid = task_pid->next) {
++        factory_remove_pid_params(&eng_params->factory, task_pid->params);
++    }
++}
++
++static char *get_time_stamp(time_t *t)
++{
++    char *ts = asctime(localtime(t));
++    size_t len = strlen(ts);
++
++    if (ts[len - 1] == '\n') {
++        ts[len - 1] = '\0';
++    }
++    return ts;
++}
++
++static int show_task_pages(void *params, int fd)
++{
++    struct cslide_pid_params *pid_params = (struct cslide_pid_params *)params;
++    struct cslide_eng_params *eng_params = pid_params->eng_params;
++    int node_num = pid_params->count_page_refs->node_num;
++    struct node_pages_info *info = pid_params->node_pages_info;
++    char *time_str = NULL;
++    int n;
++
++    time_str = get_time_stamp(&eng_params->stat_time);
++    if (time_str != NULL) {
++        dprintf_all(fd, "[%s] ", time_str);
++    }
++    dprintf_all(fd, "task %d pages info (KB):\n", pid_params->pid);
++    dprintf_all(fd, "%5s %10s %10s %10s\n", "node", "used", "hot", "cold");
++    for (n = 0; n < node_num; n++) {
++        dprintf_all(fd, "%5d %10d %10d %10d\n", n,
++                    info[n].hot + info[n].cold, info[n].hot, info[n].cold);
++    }
++    return 0;
++}
++
++static struct cslide_cmd_item g_task_cmd_items[] = {
++    {"showtaskpages", show_task_pages},
++};
++
++static int show_host_pages(void *params, int fd)
++{
++    struct cslide_eng_params *eng_params = (struct cslide_eng_params *)params;
++    struct cslide_pid_params *iter = NULL;
++    char *time_str = NULL;
++    int node_num = eng_params->mem.node_num;
++    int n;
++    uint32_t total;
++    struct node_pages_info *info = calloc(node_num, sizeof(struct node_pages_info));
++
++    if (info == NULL) {
++        etmemd_log(ETMEMD_LOG_ERR, "alloc memory for node_page_info fail\n");
++        return -1;
++    }
++
++    factory_foreach_working_pid_params(iter, &eng_params->factory) {
++        for (n = 0; n < node_num; n++) {
++            info[n].hot += iter->node_pages_info[n].hot;
++            info[n].cold += iter->node_pages_info[n].cold;
++        }
++    }
++
++    time_str = get_time_stamp(&eng_params->stat_time);
++    if (time_str != NULL) {
++        dprintf_all(fd, "[%s] ", time_str);
++    }
++    dprintf_all(fd, "host pages info (KB):\n");
++    dprintf_all(fd, "%5s %10s %10s %10s %10s\n", "node", "total", "used", "hot", "cold");
++    for (n = 0; n < node_num; n++) {
++        total = eng_params->mem.node_mem[n].huge_total / 1024;
++        dprintf_all(fd, "%5d %10d %10d %10d %10d\n",
++                    n, total, info[n].hot + info[n].cold, info[n].hot, info[n].cold);
++    }
++
++    free(info);
++    return 0;
++}
++
++struct cslide_cmd_item g_host_cmd_items[] = {
++    {"showhostpages", show_host_pages},
++};
++
++static struct cslide_cmd_item *find_cmd_item(struct cslide_cmd_item *items, unsigned n, char *cmd)
++{
++    unsigned i;
++
++    for (i = 0; i < n; i++) {
++        if (strcmp(cmd, items[i].name) == 0) {
++            return &items[i];
++        }
++    }
++
++    return NULL;
++}
++
++static int cslide_engine_do_cmd(struct engine *eng, struct task *tk, char *cmd, int fd)
++{
++    struct cslide_eng_params *eng_params = (struct cslide_eng_params *)eng->params;
++    struct cslide_pid_params *pid_params = NULL;
++    struct cslide_cmd_item *item = NULL;
++    int ret;
++
++    if (factory_working_empty(&eng_params->factory)) {
++        etmemd_log(ETMEMD_LOG_ERR, "no working pid under this cslide engine\n");
++        return -1;
++    }
++
++    item = find_cmd_item(g_host_cmd_items, ARRAY_SIZE(g_host_cmd_items), cmd);
++    if (item != NULL) {
++        pthread_mutex_lock(&eng_params->stat_mtx);
++        ret = item->func(eng_params, fd);
++        pthread_mutex_unlock(&eng_params->stat_mtx);
++        return ret;
++    }
++
++    item = find_cmd_item(g_task_cmd_items, ARRAY_SIZE(g_task_cmd_items), cmd);
++    if (item == NULL) {
++        etmemd_log(ETMEMD_LOG_ERR, "cslide cmd %s is not supportted\n", cmd);
++        return -1;
++    }
++    if (tk == NULL) {
++        etmemd_log(ETMEMD_LOG_ERR, "task for cslide cmd %s not found\n", cmd);
++        return -1;
++    }
++
++    if (tk->pids == NULL || tk->pids->params == NULL) {
++        etmemd_log(ETMEMD_LOG_ERR, "task %s for cslide cmd %s not started\n", tk->name, cmd);
++        return -1;
++    }
++
++    pid_params = (struct cslide_pid_params *)tk->pids->params;
++    pthread_mutex_lock(&eng_params->stat_mtx);
++    ret = item->func(pid_params, fd);
++    pthread_mutex_unlock(&eng_params->stat_mtx);
++    return ret;
++}
++
++static int fill_task_anon_only(void *obj, void *val)
++{
++    int ret = 0;
++    struct cslide_task_params *params = (struct cslide_task_params *)obj;
++    char *anon_only = (char *)val;
++
++    if (strcmp(anon_only, "yes") == 0) {
++        params->anon_only = true;
++    } else if (strcmp(anon_only, "no") == 0) {
++        params->anon_only = false;
++    } else {
++        etmemd_log(ETMEMD_LOG_ERR, "only_anon : not support %s\n", anon_only);
++        etmemd_log(ETMEMD_LOG_ERR, "only_anon : only support yes/no\n");
++        ret = -1;
++    }
++    free(val);
++    return ret;
++}
++
++static int fill_task_vm_flags(void *obj, void *val)
++{
++    struct cslide_task_params *params = (struct cslide_task_params *)obj;
++    char *vm_flags = (char *)val;
++
++    params->vmflags_num = split_vmflags(&params->vmflags_array, vm_flags);
++    if (params->vmflags_num <= 0) {
++        free(val);
++        etmemd_log(ETMEMD_LOG_ERR, "fill vm flags fail\n");
++        return -1;
++    }
++
++    params->vmflags_str = vm_flags;
++    if (params->vmflags_num != 1 || strcmp(params->vmflags_array[0], "ht") != 0) {
++        etmemd_log(ETMEMD_LOG_ERR, "cslide only work with ht set\n");
++        return -1;
++    }
++    return 0;
++}
++
++static struct config_item g_cslide_task_config_items[] = {
++    {"vm_flags", STR_VAL, fill_task_vm_flags, false},
++    {"anon_only", STR_VAL, fill_task_anon_only, false},
++};
++
++static int cslide_fill_task(GKeyFile *config, struct task *tk)
++{
++    struct cslide_task_params *params = calloc(1, sizeof(struct cslide_task_params));
++
++    if (params == NULL) {
++        etmemd_log(ETMEMD_LOG_ERR, "alloc cslide task params fail\n");
++        return -1;
++    }
++
++    if (parse_file_config(config, TASK_GROUP, g_cslide_task_config_items,
++                          ARRAY_SIZE(g_cslide_task_config_items), (void *)params) != 0) {
++        etmemd_log(ETMEMD_LOG_ERR, "cslide fill task params fail\n");
++        goto exit;
++    }
++
++    tk->params = params;
++    if (etmemd_get_task_pids(tk) != 0) {
++        etmemd_log(ETMEMD_LOG_ERR, "cslide fail to get task pids\n");
++        tk->params = NULL;
++        goto exit;
++    }
++    return 0;
++
++exit:
++    clear_task_params(params);
++    free(params);
++    return -1;
++}
++
++static void cslide_clear_task(struct task *tk)
++{
++    /* clear cslide task params when clear connected cslide pid params */
++    etmemd_free_task_pids(tk);
++    tk->params = NULL;
++}
++
++static int fill_node_pair(void *obj, void *val)
++{
++    struct cslide_eng_params *params = (struct cslide_eng_params *)obj;
++    char *node_pair_str = (char *)val;
++    char *pair = NULL;
++    char *saveptr_pair = NULL;
++    char *hot_node_str = NULL;
++    char *cold_node_str = NULL;
++    char *saveptr_node = NULL;
++    int hot_node, cold_node;
++    struct node_map *map = &params->node_map;
++    struct node_verifier nv;
++    char *pair_delim = " ;";
++    char *node_delim = " ,";
++    int ret = -1;
++
++    if (init_node_verifier(&nv, params->mem.node_num) != 0) {
++        etmemd_log(ETMEMD_LOG_ERR, "init_node_verifier fail\n");
++        free(val);
++        return ret;
++    }
++
++    for (pair = strtok_r(node_pair_str, pair_delim, &saveptr_pair); pair != NULL; pair = strtok_r(NULL, pair_delim, &saveptr_pair)) {
++        hot_node_str = strtok_r(pair, node_delim, &saveptr_node);
++        if (hot_node_str == NULL) {
++            etmemd_log(ETMEMD_LOG_ERR, "parse hot node failed\n");
++            goto err;
++        }
++
++        cold_node_str = strtok_r(NULL, node_delim, &saveptr_node);
++        if (cold_node_str == NULL) {
++            etmemd_log(ETMEMD_LOG_ERR, "parse cold node failed\n");
++            goto err;
++        }
++
++        if (get_int_value(hot_node_str, &hot_node) != 0) {
++            etmemd_log(ETMEMD_LOG_ERR, "transfer hot node %s to integer fail\n", hot_node_str);
++            goto err;
++        }
++
++        if (get_int_value(cold_node_str, &cold_node) != 0) {
++            etmemd_log(ETMEMD_LOG_ERR, "transfer cold node %s to integer fail\n", cold_node_str);
++            goto err;
++        }
++
++        if (!is_node_valid(&nv, hot_node) || !is_node_valid(&nv, cold_node)) {
++            etmemd_log(ETMEMD_LOG_ERR, "node %d(hot)->%d(cold) invalid\n", hot_node, cold_node);
++            goto err;
++        }
++
++        if (add_node_pair(map, cold_node, hot_node) != 0) {
++            etmemd_log(ETMEMD_LOG_ERR, "add %d(hot)->%d(cold) fail\n", hot_node, cold_node);
++            goto err;
++        }
++    }
++
++    if (has_node_unmap(&nv)) {
++        etmemd_log(ETMEMD_LOG_ERR, "there is node unmap\n");
++        goto err;
++    }
++    ret = 0;
++
++err:
++    free(val);
++    destroy_node_verifier(&nv);
++    return ret;
++}
++
++static int fill_migrate_watermark(void *obj, void *val)
++{
++    struct cslide_eng_params *params = (struct cslide_eng_params *)obj;
++    int wm = parse_to_int(val);
++
++    if (wm < MIN_WM || wm > MAX_WM) {
++        etmemd_log(ETMEMD_LOG_ERR, "migrate watermark %d invalid\n", wm);
++        return -1;
++    }
++    params->node_watermark = wm;
++    return 0;
++}
++
++static int fill_hot_threshold(void *obj, void *val)
++{
++    struct cslide_eng_params *params = (struct cslide_eng_params *)obj;
++    int t = parse_to_int(val);
++
++    if (t < 0) {
++        etmemd_log(ETMEMD_LOG_ERR, "config hot threshold %d not valid\n", t);
++        return -1;
++    }
++
++    params->hot_threshold = t;
++    return 0;
++}
++
++static int fill_hot_reserve(void *obj, void *val)
++{
++    struct cslide_eng_params *params = (struct cslide_eng_params *)obj;
++    int hot_reserve = parse_to_int(val);
++
++    params->hot_reserve = hot_reserve;
++    return 0;
++}
++
++static int fill_mig_quota(void *obj, void *val)
++{
++    struct cslide_eng_params *params = (struct cslide_eng_params *)obj;
++    int mig_quota = parse_to_int(val);
++
++    params->mig_quota = mig_quota;
++    return 0;
++}
++
++static struct config_item cslide_eng_config_items[] = {
++    {"node_pair", STR_VAL, fill_node_pair, false},
++    {"node_watermark", INT_VAL, fill_migrate_watermark, false},
++    {"hot_threshold", INT_VAL, fill_hot_threshold, false},
++    {"node_mig_quota", INT_VAL, fill_mig_quota, false},
++    {"node_hot_reserve", INT_VAL, fill_hot_reserve, false},
++};
++
++static int cslide_fill_eng(GKeyFile *config, struct engine *eng)
++{
++    struct cslide_eng_params *params = calloc(1, sizeof(struct cslide_eng_params));
++    
++    if (params == NULL) {
++        etmemd_log(ETMEMD_LOG_ERR, "alloc cslide engine params fail\n");
++        return -1;
++    }
++
++    if (init_cslide_eng_params(params) != 0) {
++        etmemd_log(ETMEMD_LOG_ERR, "init cslide engine params fail\n");
++        return -1;
++    }
++
++    params->loop = eng->proj->loop;
++    params->interval = eng->proj->interval;
++    params->sleep = eng->proj->sleep;
++    if (parse_file_config(config, ENG_GROUP, cslide_eng_config_items,
++        ARRAY_SIZE(cslide_eng_config_items), (void *)params) != 0) {
++        etmemd_log(ETMEMD_LOG_ERR, "cslide fill engine params fail\n");
++        goto destroy_eng_params;
++    }
++
++    eng->params = params;
++    if (pthread_create(&params->worker, NULL, cslide_main, params) != 0) {
++        etmemd_log(ETMEMD_LOG_ERR, "start cslide main worker fail\n");
++        goto destroy_eng_params;
++    }
++
++    return 0;
++
++destroy_eng_params:
++    destroy_cslide_eng_params(params);
++    return -1;
++}
++
++static void cslide_clear_eng(struct engine *eng)
++{
++    struct cslide_eng_params *eng_params = eng->params;
++    /* clear cslide engine params in cslide_main */
++    eng_params->finish = true;
++    eng->params = NULL;
++}
++
++struct engine_ops g_cslide_eng_ops = {
++    .fill_eng_params = cslide_fill_eng,
++    .clear_eng_params = cslide_clear_eng,
++    .fill_task_params = cslide_fill_task,
++    .clear_task_params = cslide_clear_task,
++    .alloc_pid_params = cslide_alloc_pid_params,
++    .free_pid_params = cslide_free_pid_params,
++    .start_task = cslide_start_task,
++    .stop_task = cslide_stop_task,
++    .eng_mgt_func = cslide_engine_do_cmd,
++};
++
++int fill_engine_type_cslide(struct engine *eng)
++{
++    eng->ops = &g_cslide_eng_ops;
++    eng->engine_type = CSLIDE_ENGINE;
++    eng->name = "cslide";
++    return 0;
++}
+diff --git a/src/etmemd_src/etmemd_engine.c b/src/etmemd_src/etmemd_engine.c
+index 41d8fa5..98a7430 100644
+--- a/src/etmemd_src/etmemd_engine.c
++++ b/src/etmemd_src/etmemd_engine.c
+@@ -17,38 +17,82 @@
+ #include <string.h>
+ #include "etmemd_engine.h"
+ #include "etmemd_slide.h"
++#include "etmemd_cslide.h"
+ #include "etmemd_log.h"
++#include "etmemd_common.h"
++#include "etmemd_file.h"
+ 
+-const char *etmemd_get_eng_name(enum eng_type type)
++struct engine_item {
++    char *name;
++    int (*fill_eng_func)(struct engine *eng);
++};
++
++static struct engine_item g_engine_items[] = {
++    {"slide", fill_engine_type_slide},
++    {"cslide", fill_engine_type_cslide},
++};
++
++static struct engine_item *find_engine_item(const char *name)
+ {
+-    if (type == SLIDE_ENGINE) {
+-        return "slide";
++    unsigned i;
++
++    for (i = 0; i < ARRAY_SIZE(g_engine_items); i++) {
++        if (strcmp(name, g_engine_items[i].name) == 0) {
++            return &g_engine_items[i];
++        }
+     }
+ 
+-    return "";
++    return NULL;
+ }
+ 
+-struct engine_item g_eng_items[ENGINE_TYPE_CNT] = {
+-    {SLIDE_ENGINE, fill_engine_type_slide},
+-};
+-
+-int fill_engine_type(struct engine *eng, const char *val)
++struct engine *etmemd_engine_add(GKeyFile *config)
+ {
+-    int ret = -1;
+-    int i;
++    struct engine *eng = NULL;
++    struct engine_item *item = NULL;
++    char *name = NULL;
+ 
+-    for (i = 0; i < ENGINE_TYPE_CNT; i++) {
+-        if (strcmp(val, etmemd_get_eng_name(g_eng_items[i].eng_type)) == 0) {
+-            ret = g_eng_items[i].fill_eng_func(eng);
+-            break;
+-        }
++    if (g_key_file_has_key(config, ENG_GROUP, "name", NULL) == FALSE) {
++        etmemd_log(ETMEMD_LOG_ERR, "engine name is not set\n");
++        return NULL;
+     }
+ 
+-    if (ret != 0) {
+-        etmemd_log(ETMEMD_LOG_ERR, "invalid engine type %s\n", val);
+-        return -1;
++    name = g_key_file_get_string(config, ENG_GROUP, "name", NULL);
++    if (name == NULL) {
++        etmemd_log(ETMEMD_LOG_ERR, "get name string of engine fail\n");
++        return NULL;
+     }
+-    return 0;
+-}
+ 
++    item = find_engine_item(name);
++    if (item == NULL) {
++        etmemd_log(ETMEMD_LOG_ERR, "engine %s not support\n", name);
++        goto free_name;
++    }
+ 
++    eng = calloc(1, sizeof(struct engine));
++    if (eng == NULL) {
++        etmemd_log(ETMEMD_LOG_ERR, "alloc memory for engine fail\n");
++        goto free_name;
++    }
++
++    if (item->fill_eng_func(eng) != 0) {
++        etmemd_log(ETMEMD_LOG_ERR, "fill engine %s fail\n", name);
++        free(eng);
++        eng = NULL;
++        goto free_name;
++    }
++
++    if (eng->ops == NULL) {
++        etmemd_log(ETMEMD_LOG_ERR, "engine %s without operations\n", name);
++        free(eng);
++        eng = NULL;
++    }
++
++free_name:
++    free(name);
++    return eng;
++}
++
++void etmemd_engine_remove(struct engine *eng)
++{
++    free(eng);
++}
+diff --git a/src/etmemd_src/etmemd_file.c b/src/etmemd_src/etmemd_file.c
+index 1115d7a..ac2654e 100644
+--- a/src/etmemd_src/etmemd_file.c
++++ b/src/etmemd_src/etmemd_file.c
+@@ -13,444 +13,52 @@
+  * Description: File operation API.
+  ******************************************************************************/
+ 
+-#include <stdlib.h>
+-#include <stdio.h>
+-#include <string.h>
+-#include <sys/sysinfo.h>
+-
+-#include "securec.h"
+ #include "etmemd_log.h"
+-#include "etmemd_common.h"
+-#include "etmemd_project.h"
+-#include "etmemd_engine.h"
+ #include "etmemd_file.h"
+ 
+-#define MAX_INTERVAL_VALUE 1200
+-#define MAX_SLEEP_VALUE 1200
+-#define MAX_LOOP_VALUE 120
+-
+-static int fill_project_interval(struct project *proj, const char *val)
++static int parse_item(GKeyFile *config, char *group_name, struct config_item *item, void *obj)
+ {
+-    int value;
+-
+-    if (get_int_value(val, &value) != 0) {
+-        etmemd_log(ETMEMD_LOG_ERR, "invalid project interval value.\n");
+-        return -1;
+-    }
+-
+-    if (value < 1 || value > MAX_INTERVAL_VALUE) {
+-        etmemd_log(ETMEMD_LOG_ERR, "invalid project interval value, must between 1 and 1200.\n");
+-        return -1;
+-    }
+-
+-    proj->interval = value;
+-
+-    return 0;
+-}
++    GError *error = NULL;
++    void *val;
+ 
+-static int fill_project_loop(struct project *proj, const char *val)
+-{
+-    int value;
+-
+-    if (get_int_value(val, &value) != 0) {
+-        etmemd_log(ETMEMD_LOG_ERR, "invalid project loop value.\n");
+-        return -1;
+-    }
+-
+-    if (value < 1 || value > MAX_LOOP_VALUE) {
+-        etmemd_log(ETMEMD_LOG_ERR, "invalid project loop value, must between 1 and 120.\n");
+-        return -1;
+-    }
+-
+-    proj->loop = value;
+-
+-    return 0;
+-}
+-
+-static int fill_project_sleep(struct project *proj, const char *val)
+-{
+-    int value;
+-
+-    if (get_int_value(val, &value) != 0) {
+-        etmemd_log(ETMEMD_LOG_ERR, "invalid project sleep value.\n");
+-        return -1;
+-    }
+-
+-    if (value < 1 || value > MAX_SLEEP_VALUE) {
+-        etmemd_log(ETMEMD_LOG_ERR, "invalid project sleep value, must between 1 and 1200.\n");
+-        return -1;
+-    }
+-
+-    proj->sleep = value;
+-
+-    return 0;
+-}
+-
+-static struct project_item g_project_items[] = {
+-    {"interval", fill_project_interval, false, false},
+-    {"loop", fill_project_loop, false, false},
+-    {"sleep", fill_project_sleep, false, false},
+-    {NULL, NULL, false, false},
+-};
+-
+-static int fill_project_params(struct project *proj, const char *key,
+-                               const char *val)
+-{
+-    int ret = -1;
+-    int i = 0;
+-
+-    while (g_project_items[i].proj_sec_name != NULL) {
+-        if (strcmp(key, g_project_items[i].proj_sec_name) == 0) {
+-            ret = g_project_items[i].fill_proj_func(proj, val);
+-            break;
++    if (!g_key_file_has_key(config, group_name, item->key, NULL)) {
++        if (item->option) {
++            return 0;
+         }
+-
+-        i++;
+-    }
+-
+-    if (ret != 0) {
+-        etmemd_log(ETMEMD_LOG_ERR, "parse %s project config section fail\n", key);
+-        return -1;
+-    }
+-
+-    g_project_items[i].set = true;
+-    return 0;
+-}
+-
+-static int fill_task_type(struct task *new_task, const char *val)
+-{
+-    if (strcmp(val, "pid") != 0 && strcmp(val, "name") != 0) {
+-        etmemd_log(ETMEMD_LOG_ERR, "invalid task type, must be pid or name.\n");
+-        return -1;
+-    }
+-
+-    if (new_task->type != NULL) {
+-        etmemd_log(ETMEMD_LOG_WARN, "duplicate config for task type.\n");
+-        return 0;
+-    }
+-
+-    new_task->type = calloc(1, strlen(val) + 1);
+-    if (new_task->type == NULL) {
+-        etmemd_log(ETMEMD_LOG_ERR, "malloc task type fail.\n");
+-        return -1;
+-    }
+-
+-    if (strncpy_s(new_task->type, strlen(val) + 1, val, strlen(val)) != EOK) {
+-        etmemd_log(ETMEMD_LOG_ERR, "strncpy_s for task type fail.\n");
+-        free(new_task->type);
+-        new_task->type = NULL;
+-        return -1;
+-    }
+-
+-    return 0;
+-}
+-
+-static int fill_task_value(struct task *new_task, const char *val)
+-{
+-    if (new_task->value != NULL) {
+-        etmemd_log(ETMEMD_LOG_WARN, "duplicate config for task value.\n");
+-        return 0;
+-    }
+-
+-    new_task->value = calloc(1, strlen(val) + 1);
+-    if (new_task->value == NULL) {
+-        etmemd_log(ETMEMD_LOG_WARN, "malloc task value fail.\n");
+-        return -1;
+-    }
+-
+-    if (strncpy_s(new_task->value, strlen(val) + 1, val, strlen(val)) != EOK) {
+-        etmemd_log(ETMEMD_LOG_ERR, "strncpy_s for task value fail.\n");
+-        free(new_task->value);
+-        new_task->value = NULL;
+-        return -1;
+-    }
+-
+-    return 0;
+-}
+-
+-static int fill_task_engine(struct task *new_task, const char *val)
+-{
+-    if (new_task->eng != NULL) {
+-        etmemd_log(ETMEMD_LOG_ERR, "engine is already configured\n");
+-        return -1;
+-    }
+-
+-    new_task->eng = (struct engine *)calloc(1, sizeof(struct engine));
+-    if (new_task->eng == NULL) {
+-        etmemd_log(ETMEMD_LOG_ERR, "malloc engine fail\n");
+-        return -1;
+-    }
+-
+-    new_task->eng->task = (void *)new_task;
+-
+-    if (fill_engine_type(new_task->eng, val) != 0) {
+-        free(new_task->eng);
+-        new_task->eng = NULL;
+-        return -1;
+-    }
+-
+-    return 0;
+-}
+-
+-static int fill_task_max_threads(struct task *new_task, const char *val)
+-{
+-    int value;
+-    int core;
+-
+-    if (get_int_value(val, &value) != 0) {
+-        etmemd_log(ETMEMD_LOG_ERR, "invalid task max_threads value.\n");
++        etmemd_log(ETMEMD_LOG_ERR, "key %s not set for group %s\n", item->key, group_name);
+         return -1;
+     }
+ 
+-    if (value <= 0) {
+-        etmemd_log(ETMEMD_LOG_WARN,
+-                   "Thread count is abnormal, set the default minimum of current thread count to 1\n");
+-        value = 1;
+-    }
+-
+-    core = get_nprocs();
+-    /*
+-     * For IO intensive businesses,
+-     * max-threads is limited to 2N+1 of the maximum number of threads
+-     * */
+-    if (value > 2 * core + 1) {
+-        etmemd_log(ETMEMD_LOG_WARN,
+-                   "max-threads is limited to 2N+1 of the maximum number of threads\n");
+-        value = 2 * core + 1;
+-    }
+-
+-    new_task->max_threads = value;
+-
+-    return 0;
+-}
+-
+-static struct task_item g_task_items[] = {
+-    {"type", fill_task_type, false, false},
+-    {"value", fill_task_value, false, false},
+-    {"engine", fill_task_engine, false, false},
+-    {"max_threads", fill_task_max_threads, true, false},
+-    {NULL, NULL, false, false},
+-};
+-
+-static int fill_task_params(struct task *new_task, const char *key,
+-                            const char *val)
+-{
+-    int ret = -1;
+-    int i = 0;
+-
+-    while (g_task_items[i].task_sec_name != NULL) {
+-        if (strcmp(key, g_task_items[i].task_sec_name) == 0) {
+-            ret = g_task_items[i].fill_task_func(new_task, val);
++    switch (item->type) {
++        case INT_VAL:
++            val = (void *)(long long)g_key_file_get_integer(config, group_name, item->key, &error);
+             break;
+-        }
+-
+-        i++;
+-    }
+-
+-    if (ret != 0) {
+-        etmemd_log(ETMEMD_LOG_ERR, "parse %s task config section fail\n", key);
+-        return -1;
+-    }
+-
+-    g_task_items[i].set = true;
+-    return 0;
+-}
+-
+-static int process_engine_param_keyword(const char *get_line, struct engine *eng,
+-                                        FILE *conf_file, int *is_param)
+-{
+-    if (strcmp(get_line, "param") == 0) {
+-        if (eng == NULL) {
+-            etmemd_log(ETMEMD_LOG_ERR, "must configure engine type first\n");
+-            return -1;
+-        }
+-
+-        if (eng->parse_param_conf(eng, conf_file) != 0) {
+-            etmemd_log(ETMEMD_LOG_ERR, "parse engine parameters fail\n");
++        case STR_VAL:
++            val = (void *)g_key_file_get_string(config, group_name, item->key, &error);
++            break;
++        default:
++            etmemd_log(ETMEMD_LOG_ERR, "config item type %d not support\n", item->type);
+             return -1;
+-        }
+-
+-        *is_param = 1;
+-    }
+-
+-    return 0;
+-}
+-
+-static bool etmemd_check_task_params(void)
+-{
+-    int i = 0;
+-
+-    while (g_task_items[i].task_sec_name != NULL) {
+-        /* do not check for the parameter which is optional */
+-        if (g_task_items[i].optional) {
+-            i++;
+-            continue;
+-        }
+-
+-        /* and the other parameters must be set */
+-        if (!g_task_items[i].set) {
+-            etmemd_log(ETMEMD_LOG_ERR, "%s section must be set for task parameters\n",
+-                       g_task_items[i].task_sec_name);
+-            return false;
+-        }
+-
+-        /* reset the flag of set of the section, and no need to do this for the optional ones */
+-        g_task_items[i].set = false;
+-        i++;
+     }
+ 
+-    return true;
+-}
+-
+-/*
+- * new_task created in this function is needed during the whole
+- * process life cycle of etmemd, and will be released when
+- * etmemd exit in function etmemd_free_task_struct
+- * */
+-static int get_task_params(FILE *conf_file, struct project *proj)
+-{
+-    struct task *new_task = NULL;
+-    char key[KEY_VALUE_MAX_LEN] = {};
+-    char value[KEY_VALUE_MAX_LEN] = {};
+-    char *get_line = NULL;
+-    int is_param = 0;
+-
+-    new_task = (struct task *)calloc(1, sizeof(struct task));
+-    if (new_task == NULL) {
+-        etmemd_log(ETMEMD_LOG_ERR, "malloc task fail\n");
++    if (error != NULL) {
++        etmemd_log(ETMEMD_LOG_ERR, "get value of key %s fail\n", item->key);
+         return -1;
+     }
+ 
+-    new_task->proj = proj;
+-    new_task->next = proj->tasks;
+-    /* set default count of the thread pool to 1 */
+-    new_task->max_threads = 1;
+-
+-    while ((get_line = skip_blank_line(conf_file)) != NULL) {
+-        if (strcmp(get_line, "policies") != 0) {
+-            if (process_engine_param_keyword(get_line, new_task->eng,
+-                                             conf_file, &is_param) != 0) {
+-                goto out_err;
+-            }
+-
+-            if (is_param == 1) {
+-                is_param = 0;
+-                continue;
+-            }
+-
+-            if (get_keyword_and_value(get_line, key, value) != 0) {
+-                etmemd_log(ETMEMD_LOG_ERR, "get task keyword and value fail\n");
+-                goto out_err;
+-            }
+-
+-            if (fill_task_params(new_task, key, value) != 0) {
+-                etmemd_log(ETMEMD_LOG_ERR, "fill task parameter fail\n");
+-                goto out_err;
+-            }
+-
+-            continue;
+-        }
+-
+-        goto next_task;
+-    }
+-
+-next_task:
+-    if (etmemd_check_task_params()) {
+-        proj->tasks = new_task;
+-    } else {
+-        goto out_err;
+-    }
+-
+-    if (get_line == NULL) {
+-        return 0;
+-    }
+-
+-    return get_task_params(conf_file, proj);
+-
+-out_err:
+-    etmemd_free_task_struct(&new_task);
+-    return -1;
++    return item->fill(obj, val);
+ }
+ 
+-static int get_project_params(FILE *conf_file, struct project *proj)
++int parse_file_config(GKeyFile *config, char *group_name, struct config_item *items, unsigned n, void *obj)
+ {
+-    char key[KEY_VALUE_MAX_LEN] = {};
+-    char value[KEY_VALUE_MAX_LEN] = {};
+-    char *get_line = NULL;
+-
+-    while ((get_line = skip_blank_line(conf_file)) != NULL) {
+-        if (strcmp(get_line, "policies") != 0) {
+-            if (get_keyword_and_value(get_line, key, value) != 0) {
+-                etmemd_log(ETMEMD_LOG_ERR, "get project keyword and value fail\n");
+-                return -1;
+-            }
+-
+-            if (fill_project_params(proj, key, value) != 0) {
+-                etmemd_log(ETMEMD_LOG_ERR, "fill project parameter fail\n");
+-                return -1;
+-            }
+-
+-            continue;
+-        }
++    unsigned i;
+ 
+-        if (get_task_params(conf_file, proj) != 0) {
+-            etmemd_log(ETMEMD_LOG_ERR, "get task parameters fail\n");
++    for (i = 0; i < n; i++) {
++        if (parse_item(config, group_name, &items[i], obj) != 0) {
++            etmemd_log(ETMEMD_LOG_ERR, "parse config key %s fail\n", items[i].key);
+             return -1;
+         }
+     }
+ 
+     return 0;
+ }
+-
+-static bool etmemd_check_project_params(void)
+-{
+-    int i = 0;
+-
+-    while (g_project_items[i].proj_sec_name != NULL) {
+-        /* do not check for the parameter which is optional */
+-        if (g_project_items[i].optional) {
+-            i++;
+-            continue;
+-        }
+-
+-        /* and the other parameters must be set */
+-        if (!g_project_items[i].set) {
+-            etmemd_log(ETMEMD_LOG_ERR, "%s section must be set for project parameters\n",
+-                       g_project_items[i].proj_sec_name);
+-            return false;
+-        }
+-
+-        /* reset the flag of set of the section, and no need to do this for the optional ones */
+-        g_project_items[i].set = false;
+-        i++;
+-    }
+-
+-    return true;
+-}
+-
+-int etmemd_fill_proj_by_conf(struct project *proj, FILE *conf_file)
+-{
+-    char *get_line = NULL;
+-
+-    get_line = skip_blank_line(conf_file);
+-    if (get_line == NULL) {
+-        etmemd_log(ETMEMD_LOG_ERR, "invalid config file, should not be empty\n");
+-        return -1;
+-    }
+-
+-    if (strcmp(get_line, "options") != 0) {
+-        etmemd_log(ETMEMD_LOG_ERR, "invalid config file, must begin with \"options\"\n");
+-        return -1;
+-    }
+-
+-    if (get_project_params(conf_file, proj) != 0) {
+-        etmemd_log(ETMEMD_LOG_ERR, "get project parameters fail\n");
+-        return -1;
+-    }
+-
+-    if (!etmemd_check_project_params()) {
+-        return -1;
+-    }
+-
+-    return 0;
+-}
+diff --git a/src/etmemd_src/etmemd_migrate.c b/src/etmemd_src/etmemd_migrate.c
+index 3e2f8e8..a7aa9b8 100644
+--- a/src/etmemd_src/etmemd_migrate.c
++++ b/src/etmemd_src/etmemd_migrate.c
+@@ -69,7 +69,7 @@ static int etmemd_migrate_mem(const char *pid, const char *grade_path, struct pa
+         return 0;
+     }
+ 
+-    fp = etmemd_get_proc_file(pid, grade_path, "r+");
++    fp = etmemd_get_proc_file(pid, grade_path, 0, "r+");
+     if (fp == NULL) {
+         etmemd_log(ETMEMD_LOG_ERR, "cannot open %s for pid %s\n", grade_path, pid);
+         return -1;
+diff --git a/src/etmemd_src/etmemd_pool_adapter.c b/src/etmemd_src/etmemd_pool_adapter.c
+index 890aae8..417f864 100644
+--- a/src/etmemd_src/etmemd_pool_adapter.c
++++ b/src/etmemd_src/etmemd_pool_adapter.c
+@@ -17,17 +17,18 @@
+ #include <stdlib.h>
+ #include <unistd.h>
+ #include "etmemd_pool_adapter.h"
++#include "etmemd_engine.h"
+ 
+-static void push_ctrl_workflow(struct task_pid **tk_pid)
++static void push_ctrl_workflow(struct task_pid **tk_pid, void *(*exector)(void *))
+ {
+     struct task_pid *curr_pid = NULL;
+     struct task *tk = (*tk_pid)->tk;
+     while (*tk_pid != NULL) {
+         if (threadpool_add_worker(tk->threadpool_inst,
+-                                  tk->workflow_engine,
++                                  exector,
+                                   (*tk_pid)) != 0) {
+             etmemd_log(ETMEMD_LOG_DEBUG, "Failed to push < pid %u, Task_value %s, project_name %s >\n",
+-                       (*tk_pid)->pid, tk->value, tk->proj->name);
++                       (*tk_pid)->pid, tk->value, tk->eng->proj->name);
+             curr_pid = *tk_pid;
+             *tk_pid = (*tk_pid)->next;
+             free_task_pid_mem(&curr_pid);
+@@ -40,18 +41,19 @@ static void push_ctrl_workflow(struct task_pid **tk_pid)
+ 
+ static void *launch_threadtimer_executor(void *arg)
+ {
+-    struct task *tk = (struct task *)arg;
++    struct task_executor *executor = (struct task_executor*)arg;
++    struct task *tk = executor->tk;
+     thread_pool *pool_inst = NULL;
+     bool done = false;
+     int execution_size;
+     int scheduing_count;
+ 
+-    if (tk->proj->start) {
++    if (tk->eng->proj->start) {
+         if (etmemd_get_task_pids(tk) != 0) {
+             return NULL;
+         }
+ 
+-        push_ctrl_workflow(&tk->pids);
++        push_ctrl_workflow(&tk->pids, executor->func);
+ 
+         threadpool_notify(tk->threadpool_inst);
+ 
+@@ -72,32 +74,34 @@ static void *launch_threadtimer_executor(void *arg)
+     return NULL;
+ }
+ 
+-int start_threadpool_work(struct task *tk)
++int start_threadpool_work(struct task_executor *executor)
+ {
++    struct task *tk = executor->tk;
++
+     etmemd_log(ETMEMD_LOG_DEBUG, "start etmem  for Task_value %s, project_name %s\n",
+-               tk->value, tk->proj->name);
++               tk->value, tk->eng->proj->name);
+ 
+     /* create the threadpool first and it will start auto */
+     tk->threadpool_inst = threadpool_create(tk->max_threads);
+     if (tk->threadpool_inst == NULL) {
+         etmemd_log(ETMEMD_LOG_ERR, "Thread pool creation failed for project <%s> task <%s>.\n",
+-                   tk->proj->name, tk->value);
++                   tk->eng->proj->name, tk->value);
+         return -1;
+     }
+ 
+-    tk->timer_inst = thread_timer_create(tk->proj->interval);
++    tk->timer_inst = thread_timer_create(tk->eng->proj->interval);
+     if (tk->timer_inst == NULL) {
+         threadpool_stop_and_destroy(&tk->threadpool_inst);
+         etmemd_log(ETMEMD_LOG_ERR, "Timer task creation failed for project <%s> task <%s>.\n",
+-                   tk->proj->name, tk->value);
++                   tk->eng->proj->name, tk->value);
+         return -1;
+     }
+ 
+-    if (thread_timer_start(tk->timer_inst, launch_threadtimer_executor, tk) != 0) {
++    if (thread_timer_start(tk->timer_inst, launch_threadtimer_executor, executor) != 0) {
+         threadpool_stop_and_destroy(&tk->threadpool_inst);
+         thread_timer_destroy(&tk->timer_inst);
+         etmemd_log(ETMEMD_LOG_ERR, "Timer task start failed for project <%s> task <%s>.\n",
+-                   tk->proj->name, tk->value);
++                   tk->eng->proj->name, tk->value);
+         return -1;
+     }
+ 
+@@ -107,11 +111,11 @@ int start_threadpool_work(struct task *tk)
+ void stop_and_delete_threadpool_work(struct task *tk)
+ {
+     etmemd_log(ETMEMD_LOG_DEBUG, "stop and delete task <%s> of project <%s>\n",
+-               tk->value, tk->proj->name);
++               tk->value, tk->eng->proj->name);
+ 
+     if (tk->timer_inst == NULL) {
+         etmemd_log(ETMEMD_LOG_DEBUG, "task <%s> of project <%s> has not been started, return\n",
+-                   tk->value, tk->proj->name);
++                   tk->value, tk->eng->proj->name);
+         return;
+     }
+ 
+diff --git a/src/etmemd_src/etmemd_project.c b/src/etmemd_src/etmemd_project.c
+index 7ddc63f..9ead14c 100644
+--- a/src/etmemd_src/etmemd_project.c
++++ b/src/etmemd_src/etmemd_project.c
+@@ -29,280 +29,612 @@
+ #include "etmemd_file.h"
+ #include "etmemd_log.h"
+ 
++#define MAX_INTERVAL_VALUE  1200
++#define MAX_SLEEP_VALUE     1200
++#define MAX_LOOP_VALUE      120
++
+ static SLIST_HEAD(project_list, project) g_projects = SLIST_HEAD_INITIALIZER(g_projects);
+ 
+-static void free_before_delete_project(struct project *proj)
++static struct project *get_proj_by_name(const char *name)
+ {
+-    struct task *tmp_tk = NULL;
++    struct project *proj = NULL;
++
++    SLIST_FOREACH(proj, &g_projects, entry) {
++        if (strcmp(proj->name, name) == 0) {
++            return proj;
++        }
++    }
+ 
+-    etmemd_safe_free((void **)&proj->name);
++    return NULL;
++}
+ 
+-    while (proj->tasks != NULL) {
+-        tmp_tk = proj->tasks;
+-        proj->tasks = proj->tasks->next;
++static struct engine *get_eng_by_name(struct project *proj, const char *name)
++{
++    struct engine *eng = proj->engs;
+ 
+-        etmemd_free_task_pids(tmp_tk);
+-        etmemd_free_task_struct(&tmp_tk);
++    while (eng != NULL) {
++        if (strcmp(eng->name, name) == 0) {
++            return eng;
++        }
++        eng = eng->next;
+     }
++
++    return NULL;
+ }
+ 
+-static FILE *memid_project_open_conf(const char *file_name)
++static struct task *get_task_by_name(struct project *proj, struct engine *eng, const char *name)
+ {
+-    FILE *file = NULL;
+-    char path[PATH_MAX] = {0};
+-    struct stat info;
+-    int r;
+-    int fd;
++    struct task *tk = eng->tasks;
+ 
+-    if (realpath(file_name, path) == NULL) {
+-        etmemd_log(ETMEMD_LOG_ERR, "%s should be real path.\n", file_name);
+-        return NULL;
++    while (tk != NULL) {
++        if (strcmp(tk->name, name) == 0) {
++            return tk;
++        }
++        tk = tk->next;
+     }
+ 
+-    fd = open(path, O_RDONLY);
+-    if (fd == -1) {
+-        return NULL;
++    return NULL;
++}
++
++static char *get_obj_key(char *obj_name, const char *group_name)
++{
++    if (strcmp(obj_name, group_name) == 0) {
++        return "name";
++    } else {
++        return obj_name;
+     }
++}
++
++static enum opt_result project_of_group(GKeyFile *config, const char *group_name, struct project **proj)
++{
++    *proj = NULL;
++    char *proj_name = NULL;
++    char *key = NULL;
+ 
+-    r = fstat(fd, &info);
+-    if (r == -1) {
+-        close(fd);
+-        return NULL;
++    key = get_obj_key(PROJ_GROUP, group_name);
++    if (g_key_file_has_key(config, group_name, key, NULL) == FALSE) {
++        etmemd_log(ETMEMD_LOG_ERR, "project name is not set for %s\n", group_name);
++        return OPT_INVAL;
+     }
+ 
+-    if (S_ISDIR(info.st_mode)) {
+-        etmemd_log(ETMEMD_LOG_ERR, "%s should be a file , not a folder.\n", path);
+-        close(fd);
+-        return NULL;
++    proj_name = g_key_file_get_string(config, group_name, key, NULL);
++    if (proj_name == NULL) {
++        etmemd_log(ETMEMD_LOG_ERR, "get project name from %s fail\n", group_name);
++        return OPT_INTER_ERR;
+     }
+ 
+-    file = fdopen(fd, "r");
++    *proj = get_proj_by_name(proj_name);
+ 
+-    return file;
++    free(proj_name);
++    return OPT_SUCCESS;
+ }
+ 
+-static struct project *etmemd_project_init_struct(const char *project_name)
++static enum opt_result engine_of_group(GKeyFile *config, char *group_name, struct project *proj, struct engine **eng)
+ {
+-    struct project *proj = NULL;
++    char *key = NULL;
++    char *eng_name = NULL;
++    *eng = NULL;
+ 
+-    proj = (struct project *)calloc(1, sizeof(struct project));
+-    if (proj == NULL) {
+-        etmemd_log(ETMEMD_LOG_ERR, "malloc for project fail.\n");
+-        return NULL;
++    key = get_obj_key(ENG_GROUP, group_name);
++    if (g_key_file_has_key(config, group_name, key, NULL) == FALSE) {
++        etmemd_log(ETMEMD_LOG_ERR, "engine is not set for %s\n", group_name);
++        return OPT_INVAL;
+     }
+ 
+-    proj->name = calloc(1, strlen(project_name) + 1);
+-    if (proj->name == NULL) {
+-        etmemd_log(ETMEMD_LOG_ERR, "malloc project name fail.\n");
+-        free(proj);
+-        return NULL;
++    eng_name = g_key_file_get_string(config, group_name, key, NULL);
++    if (eng_name == NULL) {
++        etmemd_log(ETMEMD_LOG_ERR, "get engine name from %s fail\n", group_name);
++        return OPT_INTER_ERR;
+     }
+ 
+-    if (strncpy_s(proj->name, strlen(project_name) + 1, project_name,
+-                  strlen(project_name)) != EOK) {
+-        etmemd_log(ETMEMD_LOG_ERR, "strncpy_s for project name fail\n");
+-        free(proj->name);
+-        proj->name = NULL;
+-        free(proj);
+-        return NULL;
++    *eng = get_eng_by_name(proj, eng_name);
++    free(eng_name);
++    return OPT_SUCCESS;
++}
++
++static enum opt_result task_of_group(GKeyFile *config, char *group_name, struct project *proj, struct engine *eng, struct task **tk)
++{
++    char *task_name = NULL;
++    char *key = NULL;
++    *tk = NULL;
++
++    key = get_obj_key(TASK_GROUP, group_name);
++    if (g_key_file_has_key(config, group_name, key, NULL) == FALSE) {
++        etmemd_log(ETMEMD_LOG_ERR, "task name is not set for %s\n", group_name);
++        return OPT_INVAL;
++    }
++
++    task_name = g_key_file_get_string(config, group_name, key, NULL);
++    if (task_name == NULL) {
++        etmemd_log(ETMEMD_LOG_ERR, "get task name from %s fail\n", group_name);
++        return OPT_INTER_ERR;
+     }
+ 
+-    return proj;
++    *tk = get_task_by_name(proj, eng, task_name);
++    free(task_name);
++    return OPT_SUCCESS;
+ }
+ 
+-static struct project *get_proj_by_name(const char *name)
++static enum opt_result get_group_objs(GKeyFile *config, char *group_name, struct project **proj, struct engine **eng, struct task **tk)
+ {
+-    struct project *proj = NULL;
++    enum opt_result ret;
+ 
+-    if (name == NULL || strlen(name) == 0) {
+-        etmemd_log(ETMEMD_LOG_ERR, "project name must be given and should not be empty.\n");
+-        return NULL;
++    /* get project */
++    ret = project_of_group(config, group_name, proj);
++    if (ret != OPT_SUCCESS) {
++        return ret;
+     }
+ 
+-    SLIST_FOREACH(proj, &g_projects, entry) {
+-        if (strcmp(proj->name, name) == 0) {
+-            return proj;
+-        }
++    /* get engine */
++    if (eng == NULL) {
++        return OPT_SUCCESS;
++    }
++    if (*proj == NULL) {
++        etmemd_log(ETMEMD_LOG_ERR, "project of group %s not existed\n", group_name);
++        return OPT_PRO_NOEXIST;
+     }
+ 
+-    return NULL;
++    ret = engine_of_group(config, group_name, *proj, eng);
++    if (ret != OPT_SUCCESS) {
++        return ret;
++    }
++
++    /* get task */
++    if (tk == NULL) {
++        return OPT_SUCCESS;
++    }
++    if (*eng == NULL) {
++        etmemd_log(ETMEMD_LOG_ERR, "engine of group %s not existed\n", group_name);
++        return OPT_ENG_NOEXIST;
++    }
++
++    ret = task_of_group(config, group_name, *proj, *eng, tk);
++    if (ret != OPT_SUCCESS) {
++        return ret;
++    }
++
++    return OPT_SUCCESS;
+ }
+ 
+-static enum opt_result check_add_params(const char *project_name, const char *file_name)
++static void project_insert_task(struct project *proj, struct engine *eng, struct task *task)
+ {
++    task->next = eng->tasks;
++    eng->tasks = task;
++    task->eng = eng;
++}
++
++static void project_remove_task(struct engine *eng, struct task *task)
++{
++    struct task **iter = &eng->tasks;
++
++    for (; *iter != NULL && *iter != task; iter = &(*iter)->next) {
++        ;
++    }
++
++    if (*iter == NULL) {
++        return;
++    }
++
++    *iter = (*iter)->next;
++    task->next = NULL;
++    task->eng = NULL;
++}
++
++static void do_remove_task(struct project *proj, struct engine *eng, struct task *tk)
++{
++    if (proj->start && eng->ops->stop_task != NULL) {
++        eng->ops->stop_task(eng, tk);
++    }
++    if (eng->ops->clear_task_params != NULL) {
++        eng->ops->clear_task_params(tk);
++    }
++
++    project_remove_task(eng, tk);
++    etmemd_remove_task(tk);
++}
++
++enum opt_result etmemd_project_add_task(GKeyFile *config)
++{
++    struct task *tk = NULL;
+     struct project *proj = NULL;
++    struct engine *eng = NULL;
++    enum opt_result ret;
+ 
+-    if (project_name == NULL || strlen(project_name) == 0) {
+-        etmemd_log(ETMEMD_LOG_ERR, "project name must be given and should not be empty.\n");
+-        return OPT_INVAL;
++    ret = get_group_objs(config, TASK_GROUP, &proj, &eng, &tk);
++    if (ret != OPT_SUCCESS) {
++        return ret;
+     }
+ 
+-    if (strlen(project_name) > PROJECT_NAME_MAX_LEN) {
+-        etmemd_log(ETMEMD_LOG_ERR, "the length of project name should not be larger than %d\n",
+-                   PROJECT_NAME_MAX_LEN);
+-        return OPT_INVAL;
++    if (tk != NULL) {
++        etmemd_log(ETMEMD_LOG_ERR, "task already exist\n");
++        return OPT_TASK_EXISTED;
+     }
+ 
+-    if (file_name == NULL || strlen(file_name) == 0) {
+-        etmemd_log(ETMEMD_LOG_ERR, "file name must be given and should not be empty.\n");
+-        return OPT_INVAL;
++    tk = etmemd_add_task(config);
++    if (tk == NULL) {
++        etmemd_log(ETMEMD_LOG_ERR, "create new task fail\n");
++        return OPT_INTER_ERR;
+     }
+ 
+-    if (strlen(file_name) > FILE_NAME_MAX_LEN) {
+-        etmemd_log(ETMEMD_LOG_ERR, "the length of file name should not be larger than %d\n",
+-                   FILE_NAME_MAX_LEN);
+-        return OPT_INVAL;
++    project_insert_task(proj, eng, tk);
++
++    if (eng->ops->fill_task_params != NULL && eng->ops->fill_task_params(config, tk) != 0) {
++        etmemd_log(ETMEMD_LOG_ERR, "fill task param fail\n");
++        goto remove_task;
+     }
+ 
+-    proj = get_proj_by_name(project_name);
+-    if (proj != NULL) {
+-        etmemd_log(ETMEMD_LOG_ERR, "project %s already exist.\n", project_name);
+-        return OPT_PRO_EXISTED;
++    if (proj->start && eng->ops->start_task(eng, tk) != 0) {
++        etmemd_log(ETMEMD_LOG_ERR, "start added task %s fail\n", tk->name);
++        goto clear_task;
+     }
+ 
+     return OPT_SUCCESS;
++
++clear_task:
++    if (eng->ops->clear_task_params != NULL) {
++        eng->ops->clear_task_params(tk);
++    }
++
++remove_task:
++    project_remove_task(eng, tk);
++    etmemd_remove_task(tk);
++
++    return OPT_INTER_ERR;
+ }
+ 
+-enum opt_result etmemd_project_add(const char *project_name, const char *file_name)
++enum opt_result etmemd_project_remove_task(GKeyFile *config)
+ {
++    struct task *tk = NULL;
+     struct project *proj = NULL;
+-    FILE *file = NULL;
++    struct engine *eng = NULL;
+     enum opt_result ret;
+ 
+-    ret = check_add_params(project_name, file_name);
+-    if (ret != 0) {
++    ret = get_group_objs(config, TASK_GROUP, &proj, &eng, &tk);
++    if (ret != OPT_SUCCESS) {
+         return ret;
+     }
+-
+-    file = memid_project_open_conf(file_name);
+-    if (file == NULL) {
+-        etmemd_log(ETMEMD_LOG_ERR, "open %s fail.\n", file_name);
+-        return OPT_INVAL;
++    if (tk == NULL) {
++        etmemd_log(ETMEMD_LOG_ERR, "task not exsit\n");
++        return OPT_TASK_NOEXIST;
+     }
+ 
+-    proj = etmemd_project_init_struct(project_name);
+-    if (proj == NULL) {
+-        goto out_close;
++    do_remove_task(proj, eng, tk);
++    return OPT_SUCCESS;
++}
++
++static void project_insert_engine(struct project *proj, struct engine *eng)
++{
++    eng->next = proj->engs;
++    proj->engs = eng;
++    eng->proj = proj;
++}
++
++static void project_remove_engine(struct project *proj, struct engine *eng)
++{
++    struct engine **iter = &(proj->engs);
++
++    for (; *iter != NULL && *iter != eng; iter = &(*iter)->next) {
++        ;
+     }
+ 
+-    if (etmemd_fill_proj_by_conf(proj, file) != 0) {
+-        etmemd_log(ETMEMD_LOG_ERR, "get project from configuration file fail.\n");
+-        free_before_delete_project(proj);
+-        free(proj);
+-        proj = NULL;
+-        goto out_close;
++    if (*iter == NULL) {
++        return;
+     }
+ 
+-    SLIST_INSERT_HEAD(&g_projects, proj, entry);
+-    fclose(file);
+-    return OPT_SUCCESS;
++    *iter = (*iter)->next;
++    eng->next = NULL;
++    eng->proj = NULL;
++}
++
++static int project_start_engine(struct project *proj, struct engine *eng)
++{
++    struct task *tk = eng->tasks;
++    int ret = 0;
+ 
+-out_close:
+-    fclose(file);
+-    return OPT_INVAL;
++    if (eng->ops->start_task == NULL) {
++        etmemd_log(ETMEMD_LOG_ERR, "engine %s not support start\n", eng->name);
++        return -1;
++    }
++
++    for (; tk != NULL; tk = tk->next) {
++        if (eng->ops->start_task(eng, tk) != 0) {
++            etmemd_log(ETMEMD_LOG_ERR, "start task %s fail.\n", tk->value);
++            ret = -1;
++        }
++    }
++    return ret;
+ }
+ 
+-static void stop_tasks(struct project *proj)
++static void project_stop_engine(struct project *proj, struct engine *eng)
+ {
+-    struct task *curr_task = NULL;
++    struct task *tk = eng->tasks;
+ 
+-    if (!proj->start) {
++    if (eng->ops->stop_task == NULL) {
++        etmemd_log(ETMEMD_LOG_ERR, "engine %s not support stop\n", eng->name);
+         return;
+     }
++    for (; tk != NULL; tk = tk->next) {
++        eng->ops->stop_task(eng, tk);
++    }
++}
+ 
+-    proj->start = false;
++static void do_remove_engine_tasks(struct project *proj, struct engine *eng)
++{
++    while (eng->tasks != NULL) {
++        do_remove_task(proj, eng, eng->tasks);
++    }
++}
+ 
+-    curr_task = proj->tasks;
+-    while (curr_task != NULL) {
+-        curr_task->stop_etmem(curr_task);
+-        etmemd_log(ETMEMD_LOG_DEBUG, "Stop for Task_value %s, project_name %s \n", curr_task->value,
+-                   curr_task->proj->name);
+-        curr_task = curr_task->next;
++static void do_remove_engine(struct project *proj, struct engine *eng)
++{
++    do_remove_engine_tasks(proj, eng);
++    if (eng->ops->clear_eng_params != NULL) {
++        eng->ops->clear_eng_params(eng);
+     }
++
++    project_remove_engine(proj, eng);
++    etmemd_engine_remove(eng);
+ }
+ 
+-enum opt_result etmemd_project_delete(const char *project_name)
++enum opt_result etmemd_project_add_engine(GKeyFile *config)
+ {
++    struct engine *eng = NULL;
+     struct project *proj = NULL;
++    enum opt_result ret;
+ 
+-    proj = get_proj_by_name(project_name);
+-    if (proj == NULL) {
+-        etmemd_log(ETMEMD_LOG_ERR, "get project fail to delete.\n");
+-        return OPT_PRO_NOEXIST;
++    ret = get_group_objs(config, ENG_GROUP, &proj, &eng, NULL);
++    if (ret != OPT_SUCCESS) {
++        return ret;
++    }
++    if (eng != NULL) {
++        etmemd_log(ETMEMD_LOG_ERR, "engine %s exists\n", eng->name);
++        return OPT_ENG_EXISTED;
+     }
+ 
+-    stop_tasks(proj);
++    eng = etmemd_engine_add(config);
++    if (eng == NULL) {
++        etmemd_log(ETMEMD_LOG_ERR, "create engine fail\n");
++        return OPT_INTER_ERR;
++    }
+ 
+-    struct task *curr_task = NULL;
+-    curr_task = proj->tasks;
+-    while (curr_task != NULL) {
+-        if (curr_task->delete_etmem != NULL) {
+-            curr_task->delete_etmem(curr_task);
+-            curr_task = curr_task->next;
+-        }
++    project_insert_engine(proj, eng);
++    if (eng->ops->fill_eng_params != NULL && eng->ops->fill_eng_params(config, eng) != 0) {
++        etmemd_log(ETMEMD_LOG_ERR, "fill %s engine params fail\n", eng->name);
++        project_remove_engine(proj, eng);
++        etmemd_engine_remove(eng);
++        return OPT_INTER_ERR;
+     }
+ 
+-    SLIST_REMOVE(&g_projects, proj, project, entry);
++    return OPT_SUCCESS;
++}
++
++enum opt_result etmemd_project_remove_engine(GKeyFile *config)
++{
++    struct engine *eng = NULL;
++    struct project *proj = NULL;
++    enum opt_result ret;
++
++    ret = get_group_objs(config, ENG_GROUP, &proj, &eng, NULL);
++    if (ret != OPT_SUCCESS) {
++        return ret;
++    }
++    if (eng == NULL) {
++        etmemd_log(ETMEMD_LOG_ERR, "remove engine is not existed\n");
++        return OPT_ENG_NOEXIST;
++    }
++
++    do_remove_engine(proj, eng);
++    return OPT_SUCCESS;
++}
+ 
+-    free_before_delete_project(proj);
++static int fill_project_name(void *obj, void *val)
++{
++    struct project *proj = (struct project *)obj;
++    char *name = (char *)val;
++    proj->name = name;
++    return 0;
++}
++
++static int fill_project_loop(void *obj, void *val)
++{
++    struct project *proj = (struct project *)obj;
++    int loop = parse_to_int(val);
++    if (loop < 1 || loop > MAX_LOOP_VALUE) {
++        etmemd_log(ETMEMD_LOG_ERR, "invalid project loop value %d, it must be between 1 and %d.\n",
++                   loop, MAX_LOOP_VALUE);
++        return -1;
++    }
++
++    proj->loop = loop;
++    return 0;
++}
++
++static int fill_project_interval(void *obj, void *val)
++{
++    struct project *proj = (struct project *)obj;
++    int interval = parse_to_int(val);
++    if (interval < 1 || interval > MAX_INTERVAL_VALUE) {
++        etmemd_log(ETMEMD_LOG_ERR, "invalid project interval value %d, it must be between 1 and %d.\n",
++                   interval, MAX_INTERVAL_VALUE);
++        return -1;
++    }
++
++    proj->interval = interval;
++    return 0;
++}
++
++static int fill_project_sleep(void *obj, void *val)
++{
++    struct project *proj = (struct project *)obj;
++    int sleep = parse_to_int(val);
++    if (sleep < 1 || sleep > MAX_SLEEP_VALUE) {
++        etmemd_log(ETMEMD_LOG_ERR, "invalid project sleep value %d, it must be between 1 and %d.\n",
++                   sleep, MAX_SLEEP_VALUE);
++        return -1;
++    }
++
++    proj->sleep = sleep;
++    return 0;
++}
++
++static struct config_item g_project_config_items[] = {
++    {"name", STR_VAL, fill_project_name, false},
++    {"loop", INT_VAL, fill_project_loop, false},
++    {"interval", INT_VAL, fill_project_interval, false},
++    {"sleep", INT_VAL, fill_project_sleep, false},
++};
++
++static void clear_project(struct project *proj)
++{
++    if (proj->name != NULL) {
++        free(proj->name);
++        proj->name = NULL;
++    }
++}
++
++static int project_fill_by_conf(GKeyFile *config, struct project *proj)
++{
++    if (parse_file_config(config, PROJ_GROUP, g_project_config_items, ARRAY_SIZE(g_project_config_items), proj) != 0) {
++        etmemd_log(ETMEMD_LOG_ERR, "parse project config fail\n");
++        clear_project(proj);
++        return -1;
++    }
++
++    return 0;
++}
++
++static void do_remove_project(struct project *proj)
++{
++    SLIST_REMOVE(&g_projects, proj, project, entry);
++    while (proj->engs != NULL) {
++        do_remove_engine(proj, proj->engs);
++    }
++    clear_project(proj);
+     free(proj);
++}
++
++enum opt_result etmemd_project_add(GKeyFile *config)
++{
++    struct project *proj = NULL;
++    enum opt_result ret;
++
++    ret = project_of_group(config, PROJ_GROUP, &proj);
++    if (ret != OPT_SUCCESS) {
++        return ret;
++    }
++    if (proj != NULL) {
++        etmemd_log(ETMEMD_LOG_ERR, "project %s existes\n", proj->name);
++        return OPT_PRO_EXISTED;
++    }
++
++    proj = (struct project *)calloc(1, sizeof(struct project));
++    if (proj == NULL) {
++        etmemd_log(ETMEMD_LOG_ERR, "alloc memory for project fail\n");
++        return OPT_INTER_ERR;
++    }
++    if (project_fill_by_conf(config, proj) != 0) {
++        etmemd_log(ETMEMD_LOG_ERR, "fill project from configuration file fail\n");
++        free(proj);
++        proj = NULL;
++        return OPT_INVAL;
++    }
+ 
++    SLIST_INSERT_HEAD(&g_projects, proj, entry);
+     return OPT_SUCCESS;
+ }
+ 
+-static void etmemd_project_print_line(void)
++enum opt_result etmemd_project_remove(GKeyFile *config)
+ {
+-    int i;
++    struct project *proj = NULL;
++    enum opt_result ret;
+ 
+-    for (i = 0; i < PROJECT_SHOW_COLM_MAX; i++) {
+-        printf("-");
++    ret = get_group_objs(config, PROJ_GROUP, &proj, NULL, NULL);
++    if (ret != OPT_SUCCESS) {
++        return ret;
++    }
++
++    if (proj == NULL) {
++        etmemd_log(ETMEMD_LOG_ERR, "remove project not existed\n");
++        return OPT_PRO_NOEXIST;
+     }
+-    printf("\n");
++
++    do_remove_project(proj);
++    return OPT_SUCCESS;
+ }
+ 
+-static void etmemd_project_print(const struct project *proj)
++static void etmemd_project_print(int fd, const struct project *proj)
+ {
+-    etmemd_project_print_line();
+-    printf("project: %s\n\n", proj->name);
+-    printf("%-8s %-32s %-32s %-32s %-16s\n",
+-           "number",
+-           "type",
+-           "value",
+-           "engine",
+-           "started");
+-    etmemd_print_tasks(proj->tasks);
+-    etmemd_project_print_line();
++    struct engine *eng = NULL;
++
++    dprintf_all(fd, "project: %s\n", proj->name);
++    dprintf_all(fd, "%-8s %-8s %-16s %-16s %-16s %-8s\n",
++                "number",
++                "type",
++                "value",
++                "name",
++                "engine",
++                "started");
++    for (eng = proj->engs; eng != NULL; eng = eng->next) {
++        etmemd_print_tasks(fd, eng->tasks, eng->name, proj->start);
++    }
+ }
+ 
+-enum opt_result etmemd_project_show(void)
++enum opt_result etmemd_project_show(const char *project_name, int sock_fd)
+ {
+     struct project *proj = NULL;
+     bool exists = false;
+ 
+     SLIST_FOREACH(proj, &g_projects, entry) {
+-        etmemd_project_print(proj);
++        if (project_name != NULL && strcmp(project_name, proj->name) != 0) {
++            continue;
++        }
++        etmemd_project_print(sock_fd, proj);
+         exists = true;
+     }
+ 
+     if (!exists) {
+-        etmemd_project_print_line();
+-        printf("project: no project exits\n\n");
+-        etmemd_project_print_line();
++        if (project_name == NULL) {
++            etmemd_log(ETMEMD_LOG_ERR, "no project exists\n");
++        } else {
++            etmemd_log(ETMEMD_LOG_ERR, "project: project %s is not existed\n\n", project_name);
++        }
++        return OPT_PRO_NOEXIST;
+     }
+ 
+-    if (fflush(stdout) != 0) {
+-        etmemd_log(ETMEMD_LOG_ERR, "fflush stdout fail.\n");
+-        return OPT_INTER_ERR;
++    return OPT_SUCCESS;
++}
++
++static int start_tasks(struct project *proj)
++{
++    struct engine *eng = NULL;
++    int ret = 0;
++
++    for (eng = proj->engs; eng != NULL; eng = eng->next) {
++        if (project_start_engine(proj, eng) != 0) {
++            ret = -1;
++        }
+     }
+ 
+-    return OPT_SUCCESS;
++    return ret;
++}
++
++static void stop_tasks(struct project *proj)
++{
++    struct engine *eng = NULL;
++
++    for (eng = proj->engs; eng != NULL; eng = eng->next) {
++        project_stop_engine(proj, eng);
++    }
+ }
+ 
+ enum opt_result etmemd_migrate_start(const char *project_name)
+ {
+     struct project *proj = NULL;
+-    struct task *curr_task = NULL;
+-    int start_task_num = 0;
++
++    if (project_name == NULL) {
++        etmemd_log(ETMEMD_LOG_ERR, "project is not set for start cmd\n");
++        return OPT_INVAL;
++    }
+ 
+     proj = get_proj_by_name(project_name);
+     if (proj == NULL) {
+@@ -315,27 +647,12 @@ enum opt_result etmemd_migrate_start(const char *project_name)
+         return OPT_PRO_STARTED;
+     }
+ 
+-    proj->start = true;
+-
+-    curr_task = proj->tasks;
+-    while (curr_task != NULL) {
+-        if (curr_task->start_etmem(curr_task) != 0) {
+-            etmemd_log(ETMEMD_LOG_ERR, "start task %s fail.\n",
+-                       curr_task->value);
+-            curr_task = curr_task->next;
+-            continue;
+-        }
+-
+-        start_task_num++;
+-        curr_task = curr_task->next;
+-    }
+-
+-    if (start_task_num == 0) {
+-        etmemd_log(ETMEMD_LOG_ERR, "all tasks start fail.\n");
+-        proj->start = false;
++    if (start_tasks(proj) != 0) {
++        etmemd_log(ETMEMD_LOG_ERR, "some task of project %s start fail\n", project_name);
+         return OPT_INTER_ERR;
+     }
+ 
++    proj->start = true;
+     return OPT_SUCCESS;
+ }
+ 
+@@ -343,6 +660,11 @@ enum opt_result etmemd_migrate_stop(const char *project_name)
+ {
+     struct project *proj = NULL;
+ 
++    if (project_name == NULL) {
++        etmemd_log(ETMEMD_LOG_ERR, "project is not set for stop cmd\n");
++        return OPT_INVAL;
++    }
++
+     proj = get_proj_by_name(project_name);
+     if (proj == NULL) {
+         etmemd_log(ETMEMD_LOG_ERR, "get project fail.\n");
+@@ -360,16 +682,47 @@ enum opt_result etmemd_migrate_stop(const char *project_name)
+     return OPT_SUCCESS;
+ }
+ 
++enum opt_result etmemd_project_mgt_engine(const char *project_name, const char *eng_name, char *cmd, char *task_name, int sock_fd)
++{
++    struct engine *eng = NULL;
++    struct project *proj = NULL;
++    struct task *tk = NULL;
++
++    if (project_name == NULL || eng_name == NULL || cmd == NULL) {
++        etmemd_log(ETMEMD_LOG_ERR, "project, engine and cmd must all be given\n");
++        return OPT_INVAL;
++    }
++
++    proj = get_proj_by_name(project_name);
++    if (proj == NULL) {
++        etmemd_log(ETMEMD_LOG_ERR, "project %s is not existed\n", project_name);
++        return OPT_PRO_NOEXIST;
++    }
++    if (!proj->start) {
++        etmemd_log(ETMEMD_LOG_ERR, "project %s is not started\n", project_name);
++        return OPT_INVAL;
++    }
++
++    eng = get_eng_by_name(proj, eng_name);
++    if (eng == NULL) {
++        etmemd_log(ETMEMD_LOG_ERR, "engine %s is not existed\n", eng_name);
++        return OPT_INVAL;
++    }
++    if (task_name != NULL) {
++        tk = get_task_by_name(proj, eng, task_name);
++    }
++    if (eng->ops->eng_mgt_func(eng, tk, cmd, sock_fd) != 0) {
++        return OPT_INVAL;
++    }
++    return OPT_SUCCESS;
++}
++
+ void etmemd_stop_all_projects(void)
+ {
+     struct project *proj = NULL;
+ 
+     while (!SLIST_EMPTY(&g_projects)) {
+         proj = SLIST_FIRST(&g_projects);
+-        SLIST_REMOVE_HEAD(&g_projects, entry);
+-        stop_tasks(proj);
+-        free_before_delete_project(proj);
+-        free(proj);
+-        proj = NULL;
++        do_remove_project(proj);
+     }
+ }
+diff --git a/src/etmemd_src/etmemd_rpc.c b/src/etmemd_src/etmemd_rpc.c
+index e74013a..e154083 100644
+--- a/src/etmemd_src/etmemd_rpc.c
++++ b/src/etmemd_src/etmemd_rpc.c
+@@ -18,11 +18,13 @@
+ #include <sys/un.h>
+ #include <sys/socket.h>
+ #include <signal.h>
++#include <glib.h>
+ #include "securec.h"
+ #include "etmemd_rpc.h"
+ #include "etmemd_project.h"
+ #include "etmemd_common.h"
+ #include "etmemd_log.h"
++#include "etmemd_file.h"
+ 
+ /* the max length of sun_path in struct sockaddr_un is 108 */
+ #define RPC_ADDR_LEN_MAX  108
+@@ -44,6 +46,9 @@ struct server_rpc_parser g_rpc_parser[] = {
+     {"proj_name", DECODE_STRING, (void **)&(g_rpc_params.proj_name)},
+     {"file_name", DECODE_STRING, (void **)&(g_rpc_params.file_name)},
+     {"cmd", DECODE_INT, (void **)&(g_rpc_params.cmd)},
++    {"eng_name", DECODE_STRING, (void **)&(g_rpc_params.eng_name)},
++    {"eng_cmd", DECODE_STRING, (void **)&(g_rpc_params.eng_cmd)},
++    {"task_name", DECODE_STRING, (void **)&(g_rpc_params.task_name)},
+     {NULL, DECODE_END, NULL},
+ };
+ 
+@@ -51,9 +56,13 @@ struct rpc_resp_msg g_resp_msg_arr[] = {
+     {OPT_SUCCESS, "success"},
+     {OPT_INVAL, "error: invalid parameters"},
+     {OPT_PRO_EXISTED, "error: project has been existed"},
++    {OPT_PRO_NOEXIST, "error: project is not exist"},
+     {OPT_PRO_STARTED, "error: project has been started"},
+     {OPT_PRO_STOPPED, "error: project has been stopped"},
+-    {OPT_PRO_NOEXIST, "error: project is not exist"},
++    {OPT_ENG_EXISTED, "error: engine has been existed"},
++    {OPT_ENG_NOEXIST, "error: engine is not exist"},
++    {OPT_TASK_EXISTED, "error: task has been existed"},
++    {OPT_TASK_NOEXIST, "error: task is not exist"},
+     {OPT_INTER_ERR, "error: etmemd has internal error"},
+     {OPT_RET_END, NULL},
+ };
+@@ -66,27 +75,123 @@ static void etmemd_set_flag(int s)
+     g_sock_fd = -1;
+ }
+ 
++static void etmemd_ignore_sig(int s)
++{
++    return;
++}
++
+ void etmemd_handle_signal(void)
+ {
+     signal(SIGINT, etmemd_set_flag);
+     signal(SIGTERM, etmemd_set_flag);
++    signal(SIGPIPE, etmemd_ignore_sig);
+ 
+     return;
+ }
+ 
++struct obj_cmd_item {
++    char *name;
++    enum opt_result (*func)(GKeyFile *config);
++};
++
++static enum opt_result do_obj_cmd(GKeyFile *config, struct obj_cmd_item *items, unsigned n)
++{
++    unsigned i;
++    bool parsed = false;
++    enum opt_result ret;
++
++    for (i = 0; i < n; i++) {
++        if (g_key_file_has_group(config, items[i].name) == FALSE) {
++            continue;
++        }
++
++        ret = items[i].func(config);
++        if (ret != 0) {
++            etmemd_log(ETMEMD_LOG_ERR, "parse group %s fail\n", items[i].name);
++            return ret;
++        }
++        parsed = true;
++    }
++
++    if (!parsed) {
++        etmemd_log(ETMEMD_LOG_ERR, "no group has been parsed\n");
++        return OPT_INVAL;
++    }
++
++    return OPT_SUCCESS;
++}
++
++struct obj_cmd_item obj_add_items[] = {
++    {PROJ_GROUP, etmemd_project_add},
++    {ENG_GROUP, etmemd_project_add_engine},
++    {TASK_GROUP, etmemd_project_add_task},
++};
++
++static enum opt_result do_obj_add(GKeyFile *config)
++{
++    return do_obj_cmd(config, obj_add_items, ARRAY_SIZE(obj_add_items));
++}
++
++static struct obj_cmd_item obj_remove_items[] = {
++    {TASK_GROUP, etmemd_project_remove_task},
++    {ENG_GROUP, etmemd_project_remove_engine},
++    {PROJ_GROUP, etmemd_project_remove},
++};
++
++static enum opt_result do_obj_remove(GKeyFile *config)
++{
++    return do_obj_cmd(config, obj_remove_items, ARRAY_SIZE(obj_remove_items));
++}
++
++static enum opt_result handle_obj_cmd(char *file_name, enum cmd_type type)
++{
++    GKeyFile *config = NULL;
++    enum opt_result ret;
++
++    if (file_name == NULL) {
++        etmemd_log(ETMEMD_LOG_ERR, "file name is not set for obj cmd\n");
++        return OPT_INVAL;
++    }
++
++    config = g_key_file_new();
++    if (config == NULL) {
++        etmemd_log(ETMEMD_LOG_ERR, "get empty config file fail\n");
++        return OPT_INTER_ERR;
++    }
++
++    if (g_key_file_load_from_file(config, file_name, G_KEY_FILE_NONE, NULL) == FALSE) {
++        etmemd_log(ETMEMD_LOG_ERR, "load config file fail\n");
++        ret = OPT_INTER_ERR;
++        goto free_file;
++    }
++
++    switch (type) {
++        case OBJ_ADD:
++            ret = do_obj_add(config);
++            break;
++        case OBJ_DEL:
++            ret = do_obj_remove(config);
++            break;
++        default:
++            ret = OPT_INVAL;
++    }
++
++free_file:
++    g_key_file_free(config);
++    return ret;
++}
++
+ static enum opt_result etmemd_switch_cmd(const struct server_rpc_params svr_param)
+ {
+     enum opt_result ret = OPT_INVAL;
+ 
+     switch (svr_param.cmd) {
+-        case PROJ_ADD:
+-            ret = etmemd_project_add(svr_param.proj_name, svr_param.file_name);
+-            return ret;
+-        case PROJ_DEL:
+-            ret = etmemd_project_delete(svr_param.proj_name);
++        case OBJ_ADD:
++        case OBJ_DEL:
++            ret = handle_obj_cmd(svr_param.file_name, svr_param.cmd);
+             return ret;
+         case PROJ_SHOW:
+-            ret = etmemd_project_show();
++            ret = etmemd_project_show(svr_param.proj_name, svr_param.sock_fd);
+             return ret;
+         case MIG_START:
+             ret = etmemd_migrate_start(svr_param.proj_name);
+@@ -94,6 +199,10 @@ static enum opt_result etmemd_switch_cmd(const struct server_rpc_params svr_para
+         case MIG_STOP:
+             ret = etmemd_migrate_stop(svr_param.proj_name);
+             return ret;
++        case ENG_CMD:
++            ret = etmemd_project_mgt_engine(svr_param.proj_name, svr_param.eng_name,
++                                            svr_param.eng_cmd, svr_param.task_name, svr_param.sock_fd);
++            return ret;
+         default:
+             etmemd_log(ETMEMD_LOG_ERR, "Invalid command.\n");
+             return ret;
+@@ -297,11 +406,24 @@ static int etmemd_rpc_decode_int(void **ptr, const char *buf,
+     return 0;
+ }
+ 
++static bool skip_null_arg(const char *buf, unsigned long *idx)
++{
++    if (buf[*idx] == '-') {
++        *idx += 2; // add 2 for skipping '- '
++        return true;
++    }
++    return false;
++}
++
+ static int etmemd_rpc_decode(struct server_rpc_parser *parser, const char *buf,
+                              unsigned long buf_len, unsigned long *idx)
+ {
+     int ret;
+ 
++    if (skip_null_arg(buf, idx)) {
++        return 0;
++    }
++
+     switch (parser->type) {
+         case DECODE_STRING:
+             ret = etmemd_rpc_decode_str(parser->member_ptr, buf, buf_len, idx);
+@@ -377,6 +499,10 @@ static void etmemd_rpc_send_response_msg(int sock_fd, enum opt_result result)
+     int i = 0;
+     ssize_t ret = -1;
+ 
++    if (result == OPT_SUCCESS) {
++        return;
++    }
++
+     while (g_resp_msg_arr[i].msg != NULL) {
+         if (result != g_resp_msg_arr[i].result) {
+             i++;
+@@ -398,6 +524,7 @@ static void etmemd_rpc_handle(int sock_fd)
+ {
+     enum opt_result ret;
+ 
++    g_rpc_params.sock_fd = sock_fd;
+     ret = etmemd_switch_cmd(g_rpc_params);
+     if (ret != OPT_SUCCESS) {
+         etmemd_log(ETMEMD_LOG_ERR, "operate cmd %d fail\n", g_rpc_params.cmd);
+@@ -474,7 +601,7 @@ static int etmemd_rpc_accept(int sock_fd)
+         goto RPC_EXIT;
+     }
+ 
+-    etmemd_log(ETMEMD_LOG_INFO, "etmemd get socket message \"%s\"\n", recv_buf);
++    etmemd_log(ETMEMD_LOG_DEBUG, "etmemd get socket message \"%s\"\n", recv_buf);
+     if (etmemd_rpc_parse(recv_buf, (unsigned long)rc) == 0) {
+         etmemd_rpc_handle(accp_fd);
+     }
+diff --git a/src/etmemd_src/etmemd_scan.c b/src/etmemd_src/etmemd_scan.c
+index 66694a1..bb8dfa3 100644
+--- a/src/etmemd_src/etmemd_scan.c
++++ b/src/etmemd_src/etmemd_scan.c
+@@ -17,10 +17,12 @@
+ #include <stdio.h>
+ #include <stdbool.h>
+ #include <unistd.h>
++#include <glib.h>
+ 
+ #include "etmemd.h"
+ #include "etmemd_scan.h"
+ #include "etmemd_project.h"
++#include "etmemd_engine.h"
+ #include "etmemd_common.h"
+ #include "etmemd_log.h"
+ #include "securec.h"
+@@ -30,6 +32,8 @@
+ #define PUD_SIZE_SHIFT 30
+ #define HEXADECIMAL_RADIX 16
+ #define PMD_IDLE_PTES_PARAMETER 512
++#define VMFLAG_MAX_LEN 100
++#define VMFLAG_MAX_NUM 30
+ 
+ static const enum page_type g_page_type_by_idle_kind[] = {
+     PTE_TYPE,
+@@ -45,11 +49,12 @@ static const enum page_type g_page_type_by_idle_kind[] = {
+     PAGE_TYPE_INVAL,
+ };
+ 
+-static u_int64_t g_page_size[PAGE_TYPE_INVAL] = {
+-    1UL << PTE_SIZE_SHIFT, /* PTE size */
+-    1UL << PMD_SIZE_SHIFT, /* PMD size */
+-    1UL << PUD_SIZE_SHIFT, /* PUD size */
+-};
++static uint64_t g_page_size[PAGE_TYPE_INVAL];
++
++int page_type_to_size(enum page_type type)
++{
++    return g_page_size[type];
++}
+ 
+ static unsigned int get_page_shift(long pagesize)
+ {
+@@ -260,13 +265,91 @@ exit:
+     return NULL;
+ }
+ 
+-struct vmas *get_vmas(const char *pid)
++static bool is_vma_with_vmflags(FILE *fp, char *vmflags_array[], int vmflags_num)
++{
++    char parse_line[FILE_LINE_MAX_LEN];
++    size_t len;
++    int i;
++
++    len = strlen(VMFLAG_HEAD);
++    while (fgets(parse_line, FILE_LINE_MAX_LEN - 1, fp) != NULL) {
++        /* skip the line which has no match length */
++        if (strlen(parse_line) <= len) {
++            continue;
++        }
++        if (strncmp(VMFLAG_HEAD, parse_line, len) != 0) {
++            continue;
++        }
++
++        /* check any flag in flags is set */
++        for (i = 0; i < vmflags_num; i++) {
++            if (strstr(parse_line, vmflags_array[i]) == NULL) {
++                return false;
++            }
++        }
++        return true;
++    }
++
++    return false;
++}
++
++static bool is_vmflags_match(FILE *fp, char *vmflags_array[], int vmflags_num)
++{
++    if (vmflags_num == 0) {
++        return true;
++    }
++    return is_vma_with_vmflags(fp, vmflags_array, vmflags_num);
++}
++
++static bool is_anon_match(bool is_anon_only, struct vma *vma)
++{
++    if (!is_anon_only) {
++        return true;
++    }
++    return is_anonymous(vma);
++}
++
++int split_vmflags(char ***vmflags_array, char *vmflags)
++{
++    char *flag = NULL;
++    char *saveptr = NULL;
++    char *tmp_array[VMFLAG_MAX_NUM] = {};
++    int vmflags_num = 0;
++    int i;
++
++    for (flag = strtok_r(vmflags, " ", &saveptr); flag != NULL; flag = strtok_r(NULL, " ,", &saveptr)) {
++        tmp_array[vmflags_num++] = flag;
++        if (vmflags_num == VMFLAG_MAX_NUM) {
++            break;
++        }
++    }
++
++    *vmflags_array = malloc(sizeof(char *) * vmflags_num);
++    if (*vmflags_array == NULL) {
++        return -1;
++    }
++
++    for (i = 0; i < vmflags_num; i++) {
++        (*vmflags_array)[i] = tmp_array[i];
++    }
++
++    return vmflags_num;
++}
++
++struct vmas *get_vmas_with_flags(const char *pid, char *vmflags_array[], int vmflags_num, bool is_anon_only)
+ {
+     struct vmas *ret_vmas = NULL;
+     struct vma **tmp_vma = NULL;
+     FILE *fp = NULL;
+     char maps_line[FILE_LINE_MAX_LEN];
+     size_t len;
++    char *maps_file = NULL;
++
++    if (vmflags_num == 0) {
++        maps_file = MAPS_FILE;
++    } else {
++        maps_file = SMAPS_FILE;
++    }
+ 
+     ret_vmas = (struct vmas *)calloc(1, sizeof(struct vmas));
+     if (ret_vmas == NULL) {
+@@ -274,9 +357,9 @@ struct vmas *get_vmas(const char *pid)
+         return NULL;
+     }
+ 
+-    fp = etmemd_get_proc_file(pid, MAPS_FILE, "r");
++    fp = etmemd_get_proc_file(pid, maps_file, 0, "r");
+     if (fp == NULL) {
+-        etmemd_log(ETMEMD_LOG_ERR, "open %s file of %s fail\n", MAPS_FILE, pid);
++        etmemd_log(ETMEMD_LOG_ERR, "open %s file of %s fail\n", maps_file, pid);
+         free(ret_vmas);
+         return NULL;
+     }
+@@ -291,23 +374,35 @@ struct vmas *get_vmas(const char *pid)
+             ret_vmas = NULL;
+             break;
+         }
+-        tmp_vma = &((*tmp_vma)->next);
+-        ret_vmas->vma_cnt++;
+ 
+-        /* if the file path is too long, maps_line cannot read file line completely, clean invalid characters. */
++        /* if the file path is too long, maps_line cannot read file line completely, clean invalid characters */
+         while (maps_line[len - 1] != '\n') {
+             if (fgets(maps_line, FILE_LINE_MAX_LEN - 1, fp) != NULL) {
+                 len = strlen(maps_line);
+                 continue;
+             }
+         }
++
++        /* skip vma without vmflags */
++        if (!is_vmflags_match(fp, vmflags_array, vmflags_num) || !is_anon_match(is_anon_only, *tmp_vma)) {
++            free(*tmp_vma);
++            *tmp_vma = NULL;
++            continue;
++        }
++
++        tmp_vma = &((*tmp_vma)->next);
++        ret_vmas->vma_cnt++;
+     }
+ 
+     fclose(fp);
+-
+     return ret_vmas;
+ }
+ 
++struct vmas *get_vmas(const char *pid)
++{
++    return get_vmas_with_flags(pid, NULL, 0, true);
++}
++
+ static u_int64_t get_address_from_buf(const unsigned char *buf, u_int64_t index)
+ {
+     u_int64_t address;
+@@ -408,9 +503,9 @@ static struct page_refs **record_parse_result(u_int64_t addr, enum page_idle_typ
+     enum page_type page_size_type;
+ 
+     /* ignore unaligned address when walk, because pages handled need to be aligned */
+-    if ((addr & (g_page_size[g_page_type_by_idle_kind[type]] - 1)) > 0) {
++    if ((addr & (page_type_to_size(g_page_type_by_idle_kind[type]) - 1)) > 0) {
+         etmemd_log(ETMEMD_LOG_WARN, "ignore address %lx which not aligned %lx for type %d\n", addr,
+-                   g_page_size[g_page_type_by_idle_kind[type]], type);
++                   page_type_to_size(g_page_type_by_idle_kind[type]), type);
+         return pf;
+     }
+ 
+@@ -429,7 +524,7 @@ static struct page_refs **record_parse_result(u_int64_t addr, enum page_idle_typ
+             break;
+         }
+ 
+-        addr += g_page_size[page_size_type];
++        addr += page_type_to_size(page_size_type);
+     }
+ 
+     return pf;
+@@ -480,23 +575,23 @@ static struct page_refs **parse_vma_result(const unsigned char *buf, u_int64_t s
+         } else if (type < PMD_IDLE_PTES) {
+             pf = record_parse_result(address, type, nr, pf);
+         } else {
+-            address = address + (u_int64_t)nr * g_page_size[g_page_type_by_idle_kind[type]];
++            address = address + (u_int64_t)nr * page_type_to_size(g_page_type_by_idle_kind[type]);
+             continue;
+         }
+ 
+         if (pf == NULL) {
+             return NULL;
+         }
+-        address = address + (u_int64_t)nr * g_page_size[g_page_type_by_idle_kind[type]];
++        address = address + (u_int64_t)nr * page_type_to_size(g_page_type_by_idle_kind[type]);
+     }
+     *end = address;
+     return pf;
+ }
+ 
+-static struct page_refs **walk_vmas(int fd,
+-                                    struct walk_address *walk_address,
+-                                    struct page_refs **pf,
+-                                    unsigned long *use_rss)
++struct page_refs **walk_vmas(int fd,
++                             struct walk_address *walk_address,
++                             struct page_refs **pf,
++                             unsigned long *use_rss)
+ {
+     unsigned char *buf = NULL;
+     u_int64_t size;
+@@ -504,7 +599,7 @@ static struct page_refs **walk_vmas(int fd,
+ 
+     /* we make the buffer size as fitable as within a vma.
+      * because the size of buffer passed to kernel will be calculated again (<< (3 + PAGE_SHIFT)) */
+-    size = ((walk_address->walk_end - walk_address->walk_start) >> 3) / g_page_size[PTE_TYPE];
++    size = ((walk_address->walk_end - walk_address->walk_start) >> 3) / page_type_to_size(PTE_TYPE);
+ 
+     /* we need to compare the size to the minimum size that kernel handled */
+     size = size < EPT_IDLE_BUF_MIN ? EPT_IDLE_BUF_MIN : size;
+@@ -547,7 +642,7 @@ int get_page_refs(const struct vmas *vmas, const char *pid, struct page_refs **p
+     struct page_refs **tmp_page_refs = NULL;
+     struct walk_address walk_address = {0, 0, 0};
+ 
+-    scan_fp = etmemd_get_proc_file(pid, IDLE_SCAN_FILE, "r");
++    scan_fp = etmemd_get_proc_file(pid, IDLE_SCAN_FILE, 0, "r");
+     if (scan_fp == NULL) {
+         etmemd_log(ETMEMD_LOG_ERR, "open %s file fail\n", IDLE_SCAN_FILE);
+         return -1;
+@@ -567,11 +662,6 @@ int get_page_refs(const struct vmas *vmas, const char *pid, struct page_refs **p
+             continue;
+         }
+ 
+-        if (!(is_anonymous(vma))) {
+-            vma = vma->next;
+-            continue;
+-        }
+-
+         /* meeting this branch means the end of address for last scan is between the address of
+          * start and end this round, so we start from lastScanEnd address in case of scan repeatly. */
+         walk_address.walk_end = vma->end;
+@@ -630,7 +720,7 @@ struct page_refs *etmemd_do_scan(const struct task_pid *tpid, const struct task
+     }
+ 
+     /* loop for scanning idle_pages to get result of memory access. */
+-    for (i = 0; i < tk->proj->loop; i++) {
++    for (i = 0; i < tk->eng->proj->loop; i++) {
+         ret = get_page_refs(vmas, pid, &page_refs, NULL);
+         if (ret != 0) {
+             etmemd_log(ETMEMD_LOG_ERR, "scan operation failed\n");
+@@ -639,7 +729,7 @@ struct page_refs *etmemd_do_scan(const struct task_pid *tpid, const struct task
+             page_refs = NULL;
+             break;
+         }
+-        sleep((unsigned)tk->proj->sleep);
++        sleep((unsigned)tk->eng->proj->sleep);
+     }
+ 
+     free_vmas(vmas);
+diff --git a/src/etmemd_src/etmemd_slide.c b/src/etmemd_src/etmemd_slide.c
+index fe8ae92..ea9ccb4 100644
+--- a/src/etmemd_src/etmemd_slide.c
++++ b/src/etmemd_src/etmemd_slide.c
+@@ -26,57 +26,7 @@
+ #include "etmemd_scan.h"
+ #include "etmemd_migrate.h"
+ #include "etmemd_pool_adapter.h"
+-
+-static int fill_slide_param_t(struct engine *eng, const char *val)
+-{
+-    int value;
+-    struct slide_params *s_param = (struct slide_params *)eng->params;
+-    struct task *tk = (struct task *)eng->task;
+-
+-    if (get_int_value(val, &value) != 0) {
+-        etmemd_log(ETMEMD_LOG_ERR, "invalid engine param T value.\n");
+-        return -1;
+-    }
+-
+-    /* the max value of T watermark is weight of write multipled by time of loop */
+-    if (value < 1 || value > tk->proj->loop * WRITE_TYPE_WEIGHT) {
+-        etmemd_log(ETMEMD_LOG_ERR, "invalid engine param T value, must between 1 and loop.\n");
+-        return -1;
+-    }
+-
+-    s_param->t = value;
+-
+-    return 0;
+-}
+-
+-static int parse_slide_params(struct engine *eng, FILE *file)
+-{
+-    char key[KEY_VALUE_MAX_LEN] = {};
+-    char value[KEY_VALUE_MAX_LEN] = {};
+-    char *get_line = NULL;
+-
+-    get_line = skip_blank_line(file);
+-    if (get_line == NULL) {
+-        etmemd_log(ETMEMD_LOG_ERR, "lack of config for slide engine privately\n");
+-        return -1;
+-    }
+-
+-    if (get_keyword_and_value(get_line, key, value) != 0) {
+-        etmemd_log(ETMEMD_LOG_ERR, "get engine param keyword and value fail\n");
+-        return -1;
+-    }
+-
+-    if (strcmp(key, "T") != 0) {
+-        etmemd_log(ETMEMD_LOG_ERR, "invalid slide parameter keyword, must be T\n");
+-        return -1;
+-    }
+-
+-    if (fill_slide_param_t(eng, value) != 0) {
+-        return -1;
+-    }
+-
+-    return 0;
+-}
++#include "etmemd_file.h"
+ 
+ static struct memory_grade *slide_policy_interface(struct page_refs **page_refs, void *params)
+ {
+@@ -125,32 +75,20 @@ static int slide_do_migrate(unsigned int pid, const struct memory_grade *memory_
+     return ret;
+ }
+ 
+-static void *slide_exector(void *arg)
++static void *slide_executor(void *arg)
+ {
+     struct task_pid *tk_pid = (struct task_pid *)arg;
+     struct page_refs *page_refs = NULL;
+     struct memory_grade *memory_grade = NULL;
+-    struct engine *eng = NULL;
+-
+-    eng = tk_pid->tk->eng;
+-    if (eng == NULL) {
+-        etmemd_log(ETMEMD_LOG_ERR, "pid %u engine is null!\n", tk_pid->pid);
+-        return NULL;
+-    }
+-
+-    if (eng->adp == NULL || eng->adp->do_scan == NULL) {
+-        etmemd_log(ETMEMD_LOG_ERR, "pid %u scan function is not registered!\n", tk_pid->pid);
+-        return NULL;
+-    }
+ 
+     /* register cleanup function in case of unexpected cancellation detected,
+      * and register for memory_grade first, because it needs to clean after page_refs is cleaned */
+     pthread_cleanup_push(clean_memory_grade_unexpected, &memory_grade);
+     pthread_cleanup_push(clean_page_refs_unexpected, &page_refs);
+ 
+-    page_refs = eng->adp->do_scan(tk_pid, tk_pid->tk);
++    page_refs = etmemd_do_scan(tk_pid, tk_pid->tk);
+     if (page_refs != NULL) {
+-        memory_grade = eng->mig_policy_func(&page_refs, eng->params);
++        memory_grade = slide_policy_interface(&page_refs, tk_pid->tk->params);
+     }
+ 
+     /* no need to use page_refs any longer.
+@@ -165,12 +103,7 @@ static void *slide_exector(void *arg)
+         goto exit;
+     }
+ 
+-    if (eng->adp->do_migrate == NULL) {
+-        etmemd_log(ETMEMD_LOG_ERR, "pid %u migrate function is not registered!\n", tk_pid->pid);
+-        goto exit;
+-    }
+-
+-    if (eng->adp->do_migrate(tk_pid->pid, memory_grade) != 0) {
++    if (slide_do_migrate(tk_pid->pid, memory_grade) != 0) {
+         etmemd_log(ETMEMD_LOG_DEBUG, "slide migrate for pid %u fail\n", tk_pid->pid);
+     }
+ 
+@@ -184,41 +117,104 @@ exit:
+     return NULL;
+ }
+ 
+-static int alloc_slide_params(struct task_pid **tk_pid)
++static int fill_task_threshold(void *obj, void *val)
+ {
+-    (*tk_pid)->params = NULL;
++    struct slide_params *params = (struct slide_params *)obj;
++    int t = parse_to_int(val);
++
++    if (t < 0) {
++        etmemd_log(ETMEMD_LOG_ERR, "slide engine param T should not be less than 0");
++        return -1;
++    }
++
++    params->t = t;
+     return 0;
+ }
+ 
+-int fill_engine_type_slide(struct engine *eng)
++static struct config_item g_slide_task_config_items[] = {
++    {"T", INT_VAL, fill_task_threshold, false},
++};
++
++static int slide_fill_task(GKeyFile *config, struct task *tk)
+ {
+-    struct slide_params *s_param = NULL;
+-    struct task *tk = (struct task *)eng->task;
++    struct slide_params *params = calloc(1, sizeof(struct slide_params));
+ 
+-    s_param = (struct slide_params *)calloc(1, sizeof(struct slide_params));
+-    if (s_param == NULL) {
+-        etmemd_log(ETMEMD_LOG_ERR, "malloc slide engine params fail\n");
++    if (params == NULL) {
++        etmemd_log(ETMEMD_LOG_ERR, "alloc slide param fail\n");
+         return -1;
+     }
+ 
+-    eng->adp = (struct adapter *)calloc(1, sizeof(struct adapter));
+-    if (eng->adp == NULL) {
+-        etmemd_log(ETMEMD_LOG_ERR, "malloc adapter for task %s engine fail\n", tk->value);
+-        free(s_param);
++    if (parse_file_config(config, TASK_GROUP, g_slide_task_config_items, ARRAY_SIZE(g_slide_task_config_items),
++                          (void *)params) != 0) {
++        etmemd_log(ETMEMD_LOG_ERR, "slide fill task fail\n");
++        goto free_params;
++    }
++
++    if (params->t > tk->eng->proj->loop * WRITE_TYPE_WEIGHT) {
++        etmemd_log(ETMEMD_LOG_ERR, "engine param T must less than loop.\n");
++        goto free_params;
++    }
++    tk->params = params;
++    return 0;
++
++free_params:
++    free(params);
++    return -1;
++}
++
++static void slide_clear_task(struct task *tk)
++{
++    free(tk->params);
++    tk->params = NULL;
++}
++
++static int slide_start_task(struct engine *eng, struct task *tk)
++{
++    struct slide_params *params = tk->params;
++
++    params->executor = malloc(sizeof(struct task_executor));
++    if (params->executor == NULL) {
++        etmemd_log(ETMEMD_LOG_ERR, "slide alloc memory for task_executor fail\n");
+         return -1;
+     }
+ 
+-    eng->params = (void *)s_param;
+-    eng->engine_type = SLIDE_ENGINE;
+-    eng->parse_param_conf = parse_slide_params;
+-    eng->mig_policy_func = slide_policy_interface;
+-    eng->adp->do_scan = etmemd_do_scan;
+-    eng->adp->do_migrate = slide_do_migrate;
+-    eng->alloc_params = alloc_slide_params;
+-    tk->start_etmem = start_threadpool_work;
+-    tk->stop_etmem = stop_and_delete_threadpool_work;
+-    tk->delete_etmem = stop_and_delete_threadpool_work;
+-    tk->workflow_engine = slide_exector;
++    params->executor->tk = tk;
++    params->executor->func = slide_executor;
++    if (start_threadpool_work(params->executor) != 0) {
++        free(params->executor);
++        params->executor = NULL;
++        etmemd_log(ETMEMD_LOG_ERR, "slide start task executor fail\n");
++        return -1;
++    }
++
++    return 0;
++}
+ 
++static void slide_stop_task(struct engine *eng, struct task *tk)
++{
++    struct slide_params *params = tk->params;
++
++    stop_and_delete_threadpool_work(tk);
++    free(params->executor);
++    params->executor = NULL;
++}
++
++struct engine_ops slide_eng_ops = {
++    .fill_eng_params = NULL,
++    .clear_eng_params = NULL,
++    .fill_task_params = slide_fill_task,
++    .clear_task_params = slide_clear_task,
++    .start_task = slide_start_task,
++    .stop_task = slide_stop_task,
++    .alloc_pid_params = NULL,
++    .free_pid_params = NULL,
++    .eng_mgt_func = NULL,
++};
++
++int fill_engine_type_slide(struct engine *eng)
++{
++    eng->ops = &slide_eng_ops;
++    eng->engine_type = SLIDE_ENGINE;
++    eng->name = "slide";
+     return 0;
+ }
+diff --git a/src/etmemd_src/etmemd_task.c b/src/etmemd_src/etmemd_task.c
+index 8474c6c..5c81b74 100644
+--- a/src/etmemd_src/etmemd_task.c
++++ b/src/etmemd_src/etmemd_task.c
+@@ -20,12 +20,14 @@
+ #include <sys/types.h>
+ #include <fcntl.h>
+ #include <sys/wait.h>
++#include <sys/sysinfo.h>
+ 
+ #include "securec.h"
+ #include "etmemd_log.h"
+ #include "etmemd_common.h"
+ #include "etmemd_task.h"
+ #include "etmemd_engine.h"
++#include "etmemd_file.h"
+ 
+ static int get_pid_through_pipe(char *arg_pid[], const int *pipefd)
+ {
+@@ -74,7 +76,10 @@ static int get_pid_through_pipe(char *arg_pid[], const int *pipefd)
+ 
+ void free_task_pid_mem(struct task_pid **tk_pid)
+ {
+-    etmemd_safe_free((void **)(&((*tk_pid)->params)));
++    struct engine *eng = (*tk_pid)->tk->eng;
++    if (eng->ops->free_pid_params != NULL) {
++        eng->ops->free_pid_params(eng, tk_pid);
++    }
+     etmemd_safe_free((void **)tk_pid);
+ }
+ 
+@@ -91,8 +96,8 @@ static void clean_nouse_pid(struct task_pid **tk_pid)
+ 
+ static struct task_pid *alloc_tkpid_node(unsigned int pid, struct task *tk)
+ {
+-    int ret;
+     struct task_pid *tk_pid = NULL;
++    struct engine *eng = tk->eng;
+ 
+     tk_pid = (struct task_pid *)calloc(1, sizeof(struct task_pid));
+     if (tk_pid == NULL) {
+@@ -102,8 +107,7 @@ static struct task_pid *alloc_tkpid_node(unsigned int pid, struct task *tk)
+     tk_pid->pid = pid;
+     tk_pid->tk = tk;
+ 
+-    ret = tk->eng->alloc_params(&tk_pid);
+-    if (ret != 0) {
++    if (eng->ops->alloc_pid_params != NULL && eng->ops->alloc_pid_params(eng, &tk_pid) != 0) {
+         free(tk_pid);
+         return NULL;
+     }
+@@ -362,6 +366,13 @@ int etmemd_get_task_pids(struct task *tk)
+     return 0;
+ }
+ 
++static void clear_task_struct(struct task *task)
++{
++    etmemd_safe_free((void **)&task->type);
++    etmemd_safe_free((void **)&task->value);
++    etmemd_safe_free((void **)&task->name);
++}
++
+ void etmemd_free_task_struct(struct task **tk)
+ {
+     struct task *task = NULL;
+@@ -371,36 +382,125 @@ void etmemd_free_task_struct(struct task **tk)
+     }
+ 
+     task = *tk;
+-    etmemd_safe_free((void **)&task->type);
+-    etmemd_safe_free((void **)&task->value);
+-
+-    if (task->eng != NULL) {
+-        etmemd_safe_free((void **)&task->eng->params);
+-        etmemd_safe_free((void **)&task->eng->adp);
+-        task->eng->task = NULL;
+-        etmemd_safe_free((void **)&task->eng);
+-        task->eng = NULL;
+-    }
+-
+-    task->proj = NULL;
++    clear_task_struct(task);
+     free(task);
+     *tk = NULL;
+ }
+ 
+-void etmemd_print_tasks(const struct task *tk)
++void etmemd_print_tasks(int fd, const struct task *tk, char *eng_name, bool started)
+ {
+     const struct task *tmp = tk;
+     int i = 1;
+ 
+     while (tmp != NULL) {
+-        printf("%-8d %-32s %-32s %-32s %-16s\n",
+-               i,
+-               tmp->type,
+-               tmp->value,
+-               etmemd_get_eng_name(tmp->eng->engine_type),
+-               tmp->timer_inst == NULL ? "false" : "true");
++        dprintf_all(fd, "%-8d %-8s %-16s %-16s %-16s %-8s\n",
++                    i,
++                    tmp->type,
++                    tmp->value,
++                    tmp->name,
++                    eng_name,
++                    started ? "true" : "false");
+ 
+         tmp = tmp->next;
+         i++;
+     }
+ }
++
++static int fill_task_name(void *obj, void *val)
++{
++    struct task *tk = (struct task *)obj;
++    char *name = (char *)val;
++    tk->name = name;
++    return 0;
++}
++
++static int fill_task_type(void *obj, void *val)
++{
++    struct task *tk = (struct task *)obj;
++    char *type = (char *)val;
++    if (strcmp(val, "pid") != 0 && strcmp(val, "name") != 0) {
++        etmemd_log(ETMEMD_LOG_ERR, "invalid task type, must be pid or name.\n");
++        return -1;
++    }
++
++    tk->type = type;
++    return 0;
++}
++
++static int fill_task_value(void *obj, void *val)
++{
++    struct task *tk = (struct task *)obj;
++    char *value = (char *)val;
++    tk->value = value;
++    return 0;
++}
++
++static int fill_task_threads(void *obj, void *val)
++{
++    struct task *tk = (struct task *)obj;
++    int max_threads = parse_to_int(val);
++    int core;
++
++    if (max_threads < 0) {
++        etmemd_log(ETMEMD_LOG_WARN,
++                   "Thread count is abnormal, set the default minimum of current thread count to 1\n");
++        max_threads = 1;
++    }
++
++    core = get_nprocs();
++    /*
++     * For IO intensive bussinesses, max-threads is limited to 2N + 1 of the maximum number
++     * of threads
++     */
++    if (max_threads > 2 * core + 1) {
++        etmemd_log(ETMEMD_LOG_WARN,
++                   "max-threads is limited to 2N+1 of the maximum number of threads\n");
++        max_threads = 2 * core + 1;
++    }
++
++    tk->max_threads = max_threads;
++    return 0;
++}
++
++struct config_item g_task_config_items[] = {
++    {"name", STR_VAL, fill_task_name, false},
++    {"type", STR_VAL, fill_task_type, false},
++    {"value", STR_VAL, fill_task_value, false},
++    {"max_threads", INT_VAL, fill_task_threads, true},
++};
++
++static int task_fill_by_conf(GKeyFile *config, struct task *tk)
++{
++    if (parse_file_config(config, TASK_GROUP, g_task_config_items,
++                          ARRAY_SIZE(g_task_config_items), (void *)tk) != 0) {
++        etmemd_log(ETMEMD_LOG_ERR, "parse task config fail\n");
++        clear_task_struct(tk);
++        return -1;
++    }
++    return 0;
++}
++
++struct task *etmemd_add_task(GKeyFile *config)
++{
++    struct task *tk = calloc(1, sizeof(struct task));
++
++    if (tk == NULL) {
++        etmemd_log(ETMEMD_LOG_ERR, "alloc task struct fail\n");
++        return NULL;
++    }
++
++    /* set default count of the thread pool to 1 */
++    tk->max_threads = 1;
++    if (task_fill_by_conf(config, tk) != 0) {
++        etmemd_log(ETMEMD_LOG_ERR, "fill task from configuration file fail.\n");
++        free(tk);
++        return NULL;
++    }
++    return tk;
++}
++
++void etmemd_remove_task(struct task *tk)
++{
++    clear_task_struct(tk);
++    free(tk);
++}
+-- 
+2.27.0
+

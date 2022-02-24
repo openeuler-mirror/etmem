@@ -1,0 +1,134 @@
+From c76f33082c0a67fe95fd7a00b079fb7191da32d5 Mon Sep 17 00:00:00 2001
+From: Kemeng Shi <shikemeng@huawei.com>
+Date: Wed, 28 Apr 2021 16:39:49 +0800
+Subject: [PATCH 08/50] fix memleak
+
+Signed-off-by: Kemeng Shi <shikemeng@huawei.com>
+---
+ src/etmemd_src/etmemd_cslide.c | 23 ++++++++++++++++++-----
+ src/etmemd_src/etmemd_rpc.c    | 17 ++++++++++++++++-
+ 2 files changed, 34 insertions(+), 6 deletions(-)
+
+diff --git a/src/etmemd_src/etmemd_cslide.c b/src/etmemd_src/etmemd_cslide.c
+index 618cafe..18cf740 100644
+--- a/src/etmemd_src/etmemd_cslide.c
++++ b/src/etmemd_src/etmemd_cslide.c
+@@ -689,6 +689,14 @@ static void factory_remove_pid_params(struct cslide_params_factory *factory, str
+ 
+ static void factory_free_pid_params(struct cslide_params_factory *factory, struct cslide_pid_params *params)
+ {
++    // Pid not started i.e not used. Free it here
++    if (params->state == STATE_NONE) {
++        free_pid_params(params);
++        return;
++    }
++
++    // Pid in use, free by cslide main when call factory_update_pid_params
++    // Avoid data race
+     params->state = STATE_FREE;
+ }
+ 
+@@ -771,7 +779,7 @@ static int cslide_count_node_pfs(struct cslide_pid_params *params)
+     void **pages = NULL;
+     int *status = NULL;
+     int actual_num = 0;
+-    int ret = -1;
++    int ret = 0;
+     int vma_i = 0;
+ 
+     if (params->vmas == NULL || params->vma_pf == NULL) {
+@@ -787,6 +795,7 @@ static int cslide_count_node_pfs(struct cslide_pid_params *params)
+     pages = malloc(sizeof(void *) * batch_size);
+     if (pages == NULL) {
+         etmemd_log(ETMEMD_LOG_ERR, "malloc pages fail\n");
++        ret = -1;
+         goto free_status;
+     }
+ 
+@@ -800,7 +809,9 @@ static int cslide_count_node_pfs(struct cslide_pid_params *params)
+         if (actual_num == batch_size || page_refs->next == NULL) {
+             if (move_pages(pid, actual_num, pages, NULL, status, MPOL_MF_MOVE_ALL) != 0) {
+                 etmemd_log(ETMEMD_LOG_ERR, "get page refs numa node fail\n");
+-                goto free_pages;
++                clean_page_refs_unexpected(&last);
++                ret = -1;
++                break;
+             }
+             insert_count_pfs(params->count_page_refs, last, status, actual_num);
+             last = page_refs->next;
+@@ -808,10 +819,10 @@ static int cslide_count_node_pfs(struct cslide_pid_params *params)
+         }
+         page_refs = page_refs->next;
+     }
++
++    // this must be called before return
+     setup_count_pfs_tail(params->count_page_refs, params->count);
+-    ret = 0;
+ 
+-free_pages:
+     free(pages);
+     pages = NULL;
+ free_status:
+@@ -2033,7 +2044,7 @@ static int cslide_fill_eng(GKeyFile *config, struct engine *eng)
+ 
+     if (init_cslide_eng_params(params) != 0) {
+         etmemd_log(ETMEMD_LOG_ERR, "init cslide engine params fail\n");
+-        return -1;
++        goto free_eng_params;
+     }
+ 
+     params->loop = eng->proj->loop;
+@@ -2055,6 +2066,8 @@ static int cslide_fill_eng(GKeyFile *config, struct engine *eng)
+ 
+ destroy_eng_params:
+     destroy_cslide_eng_params(params);
++free_eng_params:
++    free(params);
+     return -1;
+ }
+ 
+diff --git a/src/etmemd_src/etmemd_rpc.c b/src/etmemd_src/etmemd_rpc.c
+index 2e8e49d..49c292d 100644
+--- a/src/etmemd_src/etmemd_rpc.c
++++ b/src/etmemd_src/etmemd_rpc.c
+@@ -492,6 +492,21 @@ static void free_server_rpc_params(struct server_rpc_params *svr)
+         free(svr->file_name);
+         svr->file_name = NULL;
+     }
++
++    if (svr->eng_name != NULL) {
++        free(svr->eng_name);
++        svr->eng_name = NULL;
++    }
++
++    if (svr->eng_cmd != NULL) {
++        free(svr->eng_cmd);
++        svr->eng_cmd = NULL;
++    }
++
++    if (svr->task_name != NULL) {
++        free(svr->task_name);
++        svr->task_name = NULL;
++    }
+ }
+ 
+ static void etmemd_rpc_send_response_msg(int sock_fd, enum opt_result result)
+@@ -531,7 +546,6 @@ static void etmemd_rpc_handle(int sock_fd)
+     }
+ 
+     etmemd_rpc_send_response_msg(sock_fd, ret);
+-    free_server_rpc_params(&g_rpc_params);
+     return;
+ }
+ 
+@@ -605,6 +619,7 @@ static int etmemd_rpc_accept(int sock_fd)
+     if (etmemd_rpc_parse(recv_buf, (unsigned long)rc) == 0) {
+         etmemd_rpc_handle(accp_fd);
+     }
++    free_server_rpc_params(&g_rpc_params);
+     ret = 0;
+ 
+ RPC_EXIT:
+-- 
+2.27.0
+
