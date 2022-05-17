@@ -106,13 +106,13 @@ install -m 0644 userswap/include/uswap_api.h $RPM_BUILD_ROOT%{_includedir}
 %postun -p /sbin/ldconfig
 
 %changelog
-* Fri Dec 15 2021 YangXin <245051644@qq.com> 1.0-10
+* Thu Dec 16 2021 YangXin <245051644@qq.com> 1.0-10
 - Update memdcd engine for userswap page filter.
 
 * Fri Oct 29 2021 liubo <liubo254@huawei.com> 1.0-9
 - Add missing URL and source to etmem.spec
 
-* Thu Oct 20 2021 shikemeng <shikemeng@huawei.com> 1.0-8
+* Tue Oct 19 2021 shikemeng <shikemeng@huawei.com> 1.0-8
 - Add missing Requires
 - Remove write permssion in %file after strip
 - Change Requires numactl to numactl-libs
@@ -120,7 +120,7 @@ install -m 0644 userswap/include/uswap_api.h $RPM_BUILD_ROOT%{_includedir}
 * Thu Sep 30 2021 yangxin <245051644@qq.com> 1.0-7
 - Update etmem and add new features memRouter and userswap.=
 
-* Mon Aug 1 2021 louhongxiang <louhongxiang@huawei.com> 1.0-6
+* Mon Aug 2 2021 louhongxiang <louhongxiang@huawei.com> 1.0-6
 - cancel write permission of root.
 
 * Mon May 24 2021 liubo <liubo254@huawei.com> 1.0-5
@@ -129,7 +129,7 @@ install -m 0644 userswap/include/uswap_api.h $RPM_BUILD_ROOT%{_includedir}
 * Fri Apr 2 2021 louhongxiang <louhongxiang@huawei.com> 1.0-4
 - modify README correctly
 
-* Sat Mar 30 2021 liubo <liubo254@huawei.com> 1.0-3
+* Sat Mar 20 2021 liubo <liubo254@huawei.com> 1.0-3
 - Change aarch64 march to armv8-a
 
 * Thu Mar 18 2021 liubo <liubo254@huawei.com> 1.0-2
