@@ -2,7 +2,7 @@
 
 Name:	       etmem
 Version:       1.0
-Release:       10
+Release:       11
 Summary:       etmem 
 License:       Mulan PSL v2
 URL:           https://gitee.com/openeuler/etmem
@@ -59,6 +59,39 @@ Patch47: 0048-Commit-new-features-memRouter-and-userswap-to-etmem.patch
 Patch48: 0049-Add-engine-memdcd-to-etmemd.patch
 Patch49: 0050-Add-CMakeLists.txt-for-three-features-of-etmem.patch
 Patch50: 0051-update-memdcd-engine-for-userswap.patch
+Patch51: 0052-etmem-correct-example-config-file.patch
+Patch52: 0053-etmem-split-example_conf.yaml.patch
+Patch53: 0054-add-License-in-memRouter.patch
+Patch54: 0055-add-code-of-testcase-for-etmem-common-function.patch
+Patch55: 0056-add-code-of-testcase-for-etmem-project-function.patch
+Patch56: 0057-add-test-for-export-scan.patch
+Patch57: 0058-add-code-of-testcase-for-etmem-common-function.patch
+Patch58: 0059-add-code-of-testcase-for-etmem-log-ops.patch
+Patch59: 0060-add-make-install-support-to-CMakeList.patch
+Patch60: 0061-add-region-scan.patch
+Patch61: 0062-fix-etmem-build-problem.patch
+Patch62: 0063-etmem-add-code-of-testcase.patch
+Patch63: 0064-etmem-add-code-of-testcase.patch
+Patch64: 0065-etmem-add-code-of-testcase.patch
+Patch65: 0066-etmem-add-sysmem_threshold-and-swap_threshold-parame.patch
+Patch66: 0067-etmem-add-swapcache-reclaim-to-etmem.patch
+Patch67: 0068-etmem-add-swap-flag-to-support-specified-page-swap-o.patch
+Patch68: 0069-etmem-fix-the-swapcache-wmark-configuration-parse-er.patch
+Patch69: 0070-etmem-update-README.md.patch
+Patch70: 0071-etmem-add-code-of-testcase.patch
+Patch71: 0072-etmem-add-code-of-testcase.patch
+Patch72: 0073-etmem-add-testcode-script.patch
+Patch73: 0074-etmem-add-code-of-testcase.patch
+Patch74: 0075-etmem-testcode-adaptation.patch
+Patch75: 0076-cslide-limit-hot_threshold-range-to-avoid-overflow-a.patch
+Patch76: 0077-etmem-fix-the-problem-of-libso-no-permission-verific.patch
+Patch77: 0078-etmem-add-config-file-permission-check.patch
+Patch78: 0079-etmem-fix-problem-of-abnormal-task-value.patch
+Patch79: 0080-etmem-remove-useless-dt-test-code.patch
+Patch80: 0081-etmem-Fix-help-command.patch
+Patch81: 0082-etmem-add-etmem-project-License-and-notice-file.patch
+Patch82: 0083-etmem-fix-memory-leak.patch
+Patch83: 0084-etmem-add-dt-test-code-for-permission-check.patch
 
 #Dependency
 BuildRequires: cmake gcc gcc-c++ glib2-devel
@@ -87,7 +120,10 @@ install -d $RPM_BUILD_ROOT%{_sysconfdir}/etmem/
 
 install -m 0700 etmem/build/bin/etmem $RPM_BUILD_ROOT%{_bindir}
 install -m 0700 etmem/build/bin/etmemd $RPM_BUILD_ROOT%{_bindir}
-install -m 0600 etmem/conf/example_conf.yaml $RPM_BUILD_ROOT%{_sysconfdir}/etmem/
+install -m 0600 etmem/conf/damon_conf.yaml $RPM_BUILD_ROOT%{_sysconfdir}/etmem/
+install -m 0600 etmem/conf/cslide_conf.yaml $RPM_BUILD_ROOT%{_sysconfdir}/etmem/
+install -m 0600 etmem/conf/slide_conf.yaml $RPM_BUILD_ROOT%{_sysconfdir}/etmem/
+install -m 0600 etmem/conf/thirdparty_conf.yaml $RPM_BUILD_ROOT%{_sysconfdir}/etmem/
 
 install -m 0750 build/memRouter/memdcd $RPM_BUILD_ROOT%{_bindir}
 install -m 0750 build/userswap/libuswap.a $RPM_BUILD_ROOT%{_libdir}
@@ -97,7 +133,10 @@ install -m 0644 userswap/include/uswap_api.h $RPM_BUILD_ROOT%{_includedir}
 %attr(0500, -, -) %{_bindir}/etmem
 %attr(0500, -, -) %{_bindir}/etmemd
 %dir %{_sysconfdir}/etmem
-%{_sysconfdir}/etmem/example_conf.yaml
+%{_sysconfdir}/etmem/damon_conf.yaml
+%{_sysconfdir}/etmem/cslide_conf.yaml
+%{_sysconfdir}/etmem/slide_conf.yaml
+%{_sysconfdir}/etmem/thirdparty_conf.yaml
 %attr(0550, -, -) %{_bindir}/memdcd
 %attr(0550, -, -) %{_libdir}/libuswap.a
 %{_includedir}/uswap_api.h
@@ -106,6 +145,9 @@ install -m 0644 userswap/include/uswap_api.h $RPM_BUILD_ROOT%{_includedir}
 %postun -p /sbin/ldconfig
 
 %changelog
+* Mon Aug 1 2022 liubo <liubo254@huawei.com> 1.0-11
+- Sync the features and bug fixes in the etmem source repo. 
+
 * Thu Dec 16 2021 YangXin <245051644@qq.com> 1.0-10
 - Update memdcd engine for userswap page filter.
 
