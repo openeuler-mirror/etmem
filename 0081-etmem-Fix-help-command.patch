@@ -1,0 +1,46 @@
+From 0150a6b2f6ec1b6ecb076832982677dd10403f33 Mon Sep 17 00:00:00 2001
+From: liubo <liubo254@huawei.com>
+Date: Fri, 27 May 2022 09:09:02 +0800
+Subject: [PATCH 31/33] etmem: Fix help command
+
+Add missing content about engine command in help
+documentation.
+
+Signed-off-by: liubo <liubo254@huawei.com>
+---
+ etmem/src/etmem_src/etmem.c        | 4 ++--
+ etmem/src/etmem_src/etmem_engine.c | 3 ++-
+ 2 files changed, 4 insertions(+), 3 deletions(-)
+
+diff --git a/etmem/src/etmem_src/etmem.c b/etmem/src/etmem_src/etmem.c
+index f243a75..694a477 100644
+--- a/etmem/src/etmem_src/etmem.c
++++ b/etmem/src/etmem_src/etmem.c
+@@ -32,8 +32,8 @@ static void usage(void)
+             "    etmem OBJECT COMMAND\n"
+             "    etmem help\n"
+             "\nParameters:\n"
+-            "    OBJECT  := { project | obj }\n"
+-            "    COMMAND := { add | del | start | stop | show | help }\n");
++            "    OBJECT  := { project | obj | engine }\n"
++            "    COMMAND := { add | del | start | stop | show | eng_cmd | help }\n");
+ }
+ 
+ static struct etmem_obj *etmem_obj_get(const char *name)
+diff --git a/etmem/src/etmem_src/etmem_engine.c b/etmem/src/etmem_src/etmem_engine.c
+index 675c38f..968f36b 100644
+--- a/etmem/src/etmem_src/etmem_engine.c
++++ b/etmem/src/etmem_src/etmem_engine.c
+@@ -36,7 +36,8 @@ static void engine_help(void)
+             "    2. socket name must be given.\n"
+             "    3. engine name must be given.\n"
+             "    4. engine cmd must be given.\n"
+-            "    5. eng_cmd is supported by engine own.\n");
++            "    5. eng_cmd is supported by engine own.\n"
++            "    6. cslide engine eng_cmd: showtaskpages, showhostpages.\n");
+ }
+ 
+ static void engine_parse_cmd(struct etmem_conf *conf, struct mem_proj *proj)
+-- 
+1.8.3.1
+
