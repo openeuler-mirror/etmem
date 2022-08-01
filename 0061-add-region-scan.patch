@@ -1,0 +1,1315 @@
+From caeab903170cd7745b9c8ab3c5ebbc4fd9d8b30d Mon Sep 17 00:00:00 2001
+From: geruijun <geruijun@huawei.com>
+Date: Thu, 28 Oct 2021 15:45:40 +0800
+Subject: [PATCH 11/33] add region scan
+
+Signed-off-by: geruijun <geruijun@huawei.com>
+---
+ etmem/CMakeLists.txt                       |   3 +-
+ etmem/conf/cslide_conf.yaml                |   1 +
+ etmem/conf/damon_conf.yaml                 |  26 ++
+ etmem/conf/slide_conf.yaml                 |   1 +
+ etmem/conf/thirdparty_conf.yaml            |   1 +
+ etmem/inc/etmemd_inc/etmemd_damon.h        |  25 ++
+ etmem/inc/etmemd_inc/etmemd_engine.h       |   1 +
+ etmem/inc/etmemd_inc/etmemd_file.h         |  10 +
+ etmem/inc/etmemd_inc/etmemd_project_exp.h  |  24 +-
+ etmem/src/etmem_src/etmem_obj.c            |   2 +-
+ etmem/src/etmemd_src/etmemd_common.c       |   5 +-
+ etmem/src/etmemd_src/etmemd_cslide.c       |   9 +-
+ etmem/src/etmemd_src/etmemd_damon.c        | 573 +++++++++++++++++++++++++++++
+ etmem/src/etmemd_src/etmemd_engine.c       |   2 +
+ etmem/src/etmemd_src/etmemd_file.c         |   2 +-
+ etmem/src/etmemd_src/etmemd_pool_adapter.c |   4 +-
+ etmem/src/etmemd_src/etmemd_project.c      | 207 ++++++++++-
+ etmem/src/etmemd_src/etmemd_scan.c         |  11 +-
+ etmem/src/etmemd_src/etmemd_slide.c        |   6 +-
+ 19 files changed, 879 insertions(+), 34 deletions(-)
+ create mode 100644 etmem/conf/damon_conf.yaml
+ create mode 100644 etmem/inc/etmemd_inc/etmemd_damon.h
+ create mode 100644 etmem/src/etmemd_src/etmemd_damon.c
+
+diff --git a/etmem/CMakeLists.txt b/etmem/CMakeLists.txt
+index b5eb83e..e067fe5 100644
+--- a/etmem/CMakeLists.txt
++++ b/etmem/CMakeLists.txt
+@@ -40,7 +40,8 @@ set(ETMEMD_SRC
+  ${ETMEMD_SRC_DIR}/etmemd_threadpool.c
+  ${ETMEMD_SRC_DIR}/etmemd_threadtimer.c
+  ${ETMEMD_SRC_DIR}/etmemd_pool_adapter.c
+- ${ETMEMD_SRC_DIR}/etmemd_migrate.c)
++ ${ETMEMD_SRC_DIR}/etmemd_migrate.c
++ ${ETMEMD_SRC_DIR}/etmemd_damon.c)
+ 
+ set(ETMEM_SRC
+  ${ETMEM_SRC_DIR}/etmem.c
+diff --git a/etmem/conf/cslide_conf.yaml b/etmem/conf/cslide_conf.yaml
+index 6b6ecc3..6455065 100644
+--- a/etmem/conf/cslide_conf.yaml
++++ b/etmem/conf/cslide_conf.yaml
+@@ -1,5 +1,6 @@
+ [project]
+ name=test
++scan_type=page
+ loop=1
+ interval=1
+ sleep=1
+diff --git a/etmem/conf/damon_conf.yaml b/etmem/conf/damon_conf.yaml
+new file mode 100644
+index 0000000..1a53a46
+--- /dev/null
++++ b/etmem/conf/damon_conf.yaml
+@@ -0,0 +1,26 @@
++[project]
++name=test
++scan_type=region
++sample_interval=5000
++aggr_interval=100000
++update_interval=1000000
++min_nr_regions=10
++max_nr_regions=1000
++
++[engine]
++name=damon
++project=test
++min_size=0
++max_size=4294967295
++min_acc=0
++max_acc=2
++min_age=0
++max_age=4294967295
++action=pageout
++
++[task]
++project=test
++engine=damon
++name=background_damon
++type=name
++value=mysqld
+diff --git a/etmem/conf/slide_conf.yaml b/etmem/conf/slide_conf.yaml
+index b99ab50..75f0220 100644
+--- a/etmem/conf/slide_conf.yaml
++++ b/etmem/conf/slide_conf.yaml
+@@ -1,5 +1,6 @@
+ [project]
+ name=test
++scan_type=page
+ loop=1
+ interval=1
+ sleep=1
+diff --git a/etmem/conf/thirdparty_conf.yaml b/etmem/conf/thirdparty_conf.yaml
+index 1e1e9ac..c488ed2 100644
+--- a/etmem/conf/thirdparty_conf.yaml
++++ b/etmem/conf/thirdparty_conf.yaml
+@@ -1,5 +1,6 @@
+ [project]
+ name=test
++scan_type=page
+ loop=1
+ interval=1
+ sleep=1
+diff --git a/etmem/inc/etmemd_inc/etmemd_damon.h b/etmem/inc/etmemd_inc/etmemd_damon.h
+new file mode 100644
+index 0000000..cc9c36f
+--- /dev/null
++++ b/etmem/inc/etmemd_inc/etmemd_damon.h
+@@ -0,0 +1,25 @@
++/******************************************************************************
++ * Copyright (c) Huawei Technologies Co., Ltd. 2019-2021. All rights reserved.
++ * etmem is licensed under the Mulan PSL v2.
++ * You can use this software according to the terms and conditions of the Mulan PSL v2.
++ * You may obtain a copy of Mulan PSL v2 at:
++ * http://license.coscl.org.cn/MulanPSL2
++ * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR
++ * IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY OR FIT FOR A PARTICULAR
++ * PURPOSE.
++ * See the Mulan PSL v2 for more details.
++ * Author: geruijun
++ * Create: 2021-10-28
++ * Description: This is a header file of damon engine.
++ ******************************************************************************/
++
++#ifndef ETMEMD_DAMON_H
++#define ETMEMD_DAMON_H
++
++#include "etmemd_project.h"
++
++int etmemd_start_damon(struct project *proj);
++int etmemd_stop_damon(void);
++int fill_engine_type_damon(struct engine *eng, GKeyFile *config);
++
++#endif
+diff --git a/etmem/inc/etmemd_inc/etmemd_engine.h b/etmem/inc/etmemd_inc/etmemd_engine.h
+index 9a50e10..7750c8b 100644
+--- a/etmem/inc/etmemd_inc/etmemd_engine.h
++++ b/etmem/inc/etmemd_inc/etmemd_engine.h
+@@ -25,6 +25,7 @@ enum eng_type {
+     SLIDE_ENGINE = 0,
+     CSLIDE_ENGINE,
+     MEMDCD_ENGINE,
++    DAMON_ENGINE,
+     DYNAMIC_FB_ENGINE,
+     HISTORICAL_FB_ENGINE,
+     THIRDPARTY_ENGINE,
+diff --git a/etmem/inc/etmemd_inc/etmemd_file.h b/etmem/inc/etmemd_inc/etmemd_file.h
+index 34ccaf9..de2d4ad 100644
+--- a/etmem/inc/etmemd_inc/etmemd_file.h
++++ b/etmem/inc/etmemd_inc/etmemd_file.h
+@@ -44,4 +44,14 @@ static inline int parse_to_int(void *val)
+     return (int)(long long)val;
+ }
+ 
++static inline unsigned int parse_to_uint(void *val)
++{
++    return (unsigned int)(long long)val;
++}
++
++static inline unsigned long parse_to_ulong(void *val)
++{
++    return (unsigned long)(long long)val;
++}
++
+ #endif
+diff --git a/etmem/inc/etmemd_inc/etmemd_project_exp.h b/etmem/inc/etmemd_inc/etmemd_project_exp.h
+index bcd5108..8740f7e 100644
+--- a/etmem/inc/etmemd_inc/etmemd_project_exp.h
++++ b/etmem/inc/etmemd_inc/etmemd_project_exp.h
+@@ -19,15 +19,35 @@
+ #include <sys/queue.h>
+ #include <stdbool.h>
+ 
+-struct project {
+-    char *name;
++enum scan_type {
++    PAGE_SCAN = 0,
++    REGION_SCAN,
++};
++
++struct page_scan {
+     int interval;
+     int loop;
+     int sleep;
++};
++
++struct region_scan {
++    unsigned long sample_interval;
++    unsigned long aggr_interval;
++    unsigned long update_interval;
++    unsigned long min_nr_regions;
++    unsigned long max_nr_regions;
++};
++
++struct project {
++    char *name;
++    enum scan_type type;
++    void *scan_param;
+     bool start;
+     struct engine *engs;
+ 
+     SLIST_ENTRY(project) entry;
+ };
+ 
++int scan_fill_by_conf(GKeyFile *config, struct project *proj);
++
+ #endif
+diff --git a/etmem/src/etmem_src/etmem_obj.c b/etmem/src/etmem_src/etmem_obj.c
+index a5517ea..1a05a47 100644
+--- a/etmem/src/etmem_src/etmem_obj.c
++++ b/etmem/src/etmem_src/etmem_obj.c
+@@ -57,7 +57,7 @@ static int obj_parse_cmd(struct etmem_conf *conf, struct mem_proj *proj)
+         }
+     }
+ 
+-    printf("obj cmd %s is not supportted.\n", cmd);
++    printf("obj cmd %s is not supported.\n", cmd);
+     return -1;
+ }
+ 
+diff --git a/etmem/src/etmemd_src/etmemd_common.c b/etmem/src/etmemd_src/etmemd_common.c
+index 4595499..ebf6232 100644
+--- a/etmem/src/etmemd_src/etmemd_common.c
++++ b/etmem/src/etmemd_src/etmemd_common.c
+@@ -198,16 +198,19 @@ int get_unsigned_int_value(const char *val, unsigned int *value)
+ int get_unsigned_long_value(const char *val, unsigned long *value)
+ {
+     char *pos = NULL;
++    unsigned long value_tmp;
+ 
+     errno = 0;
+-    *value = strtoul(val, &pos, DECIMAL_RADIX);
++    value_tmp = strtoul(val, &pos, DECIMAL_RADIX);
+     if (check_str_format(pos[0])) {
+         etmemd_log(ETMEMD_LOG_ERR, "invalid value, must be type of unsigned long.\n");
+         return -1;
+     }
+ 
++    *value = value_tmp;
+     return 0;
+ }
++
+ void etmemd_safe_free(void **ptr)
+ {
+     if (ptr == NULL || *ptr == NULL) {
+diff --git a/etmem/src/etmemd_src/etmemd_cslide.c b/etmem/src/etmemd_src/etmemd_cslide.c
+index ad3eff8..b3d1637 100644
+--- a/etmem/src/etmemd_src/etmemd_cslide.c
++++ b/etmem/src/etmemd_src/etmemd_cslide.c
+@@ -1818,7 +1818,7 @@ static int cslide_engine_do_cmd(struct engine *eng, struct task *tk, char *cmd,
+ 
+     item = find_cmd_item(g_task_cmd_items, ARRAY_SIZE(g_task_cmd_items), cmd);
+     if (item == NULL) {
+-        etmemd_log(ETMEMD_LOG_ERR, "cslide cmd %s is not supportted\n", cmd);
++        etmemd_log(ETMEMD_LOG_ERR, "cslide cmd %s is not supported\n", cmd);
+         return -1;
+     }
+     if (tk == NULL) {
+@@ -2060,6 +2060,7 @@ static struct config_item cslide_eng_config_items[] = {
+ static int cslide_fill_eng(GKeyFile *config, struct engine *eng)
+ {
+     struct cslide_eng_params *params = calloc(1, sizeof(struct cslide_eng_params));
++    struct page_scan *page_scan = (struct page_scan *)eng->proj->scan_param;
+     
+     if (params == NULL) {
+         etmemd_log(ETMEMD_LOG_ERR, "alloc cslide engine params fail\n");
+@@ -2071,9 +2072,9 @@ static int cslide_fill_eng(GKeyFile *config, struct engine *eng)
+         goto free_eng_params;
+     }
+ 
+-    params->loop = eng->proj->loop;
+-    params->interval = eng->proj->interval;
+-    params->sleep = eng->proj->sleep;
++    params->loop = page_scan->loop;
++    params->interval = page_scan->interval;
++    params->sleep = page_scan->sleep;
+     if (parse_file_config(config, ENG_GROUP, cslide_eng_config_items,
+         ARRAY_SIZE(cslide_eng_config_items), (void *)params) != 0) {
+         etmemd_log(ETMEMD_LOG_ERR, "cslide fill engine params fail\n");
+diff --git a/etmem/src/etmemd_src/etmemd_damon.c b/etmem/src/etmemd_src/etmemd_damon.c
+new file mode 100644
+index 0000000..aa6d1b3
+--- /dev/null
++++ b/etmem/src/etmemd_src/etmemd_damon.c
+@@ -0,0 +1,573 @@
++/******************************************************************************
++ * Copyright (c) Huawei Technologies Co., Ltd. 2019-2021. All rights reserved.
++ * etmem is licensed under the Mulan PSL v2.
++ * You can use this software according to the terms and conditions of the Mulan PSL v2.
++ * You may obtain a copy of Mulan PSL v2 at:
++ * http://license.coscl.org.cn/MulanPSL2
++ * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR
++ * IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY OR FIT FOR A PARTICULAR
++ * PURPOSE.
++ * See the Mulan PSL v2 for more details.
++ * Author: geruijun
++ * Create: 2021-10-28
++ * Description: Add etmemd damon engine.
++ ******************************************************************************/
++
++#include <stdio.h>
++#include <string.h>
++#include <unistd.h>
++
++#include "securec.h"
++#include "etmemd_log.h"
++#include "etmemd_common.h"
++#include "etmemd_file.h"
++#include "etmemd_engine.h"
++#include "etmemd_task.h"
++#include "etmemd_task_exp.h"
++#include "etmemd_scan.h"
++#include "etmemd_damon.h"
++
++#define KERNEL_DAMON_PATH "/sys/kernel/debug/damon/"
++#define DAMON_PARAM_TARGET_IDS "target_ids"
++#define DAMON_PARAM_ATTRS "attrs"
++#define DAMON_PARAM_SCHEMES "schemes"
++#define DAMON_PARAM_MONITOR_ON "monitor_on"
++
++#define ON_LEN 2
++#define OFF_LEN 3
++#define INT_MAX_LEN 10
++#define NUM_OF_ATTRS 5
++#define NUM_OF_SCHEMES 7
++
++enum damos_action {
++    DAMOS_WILLNEED,
++    DAMOS_COLD,
++    DAMOS_PAGEOUT,
++    DAMOS_HUGEPAGE,
++    DAMOS_NOHUGEPAGE,
++    DAMOS_STAT,
++};
++
++struct action_item {
++    char *action_str;
++    enum damos_action action_type;
++};
++
++struct damon_eng_params {
++    unsigned long min_sz_region;
++    unsigned long max_sz_region;
++    unsigned int min_nr_accesses;
++    unsigned int max_nr_accesses;
++    unsigned int min_age_region;
++    unsigned int max_age_region;
++    enum damos_action action;
++};
++
++static bool check_damon_exist(void)
++{
++    if (access(KERNEL_DAMON_PATH, F_OK) != 0) {
++        return false;
++    }
++    return true;
++}
++
++static FILE *get_damon_file(const char *file)
++{
++    char *file_name = NULL;
++    size_t file_str_size;
++    FILE *fp = NULL;
++
++    file_str_size = strlen(KERNEL_DAMON_PATH) + strlen(file) + 1;
++    file_name = (char *)calloc(file_str_size, sizeof(char));
++    if (file_name == NULL) {
++        etmemd_log(ETMEMD_LOG_ERR, "malloc for damon file %s fail\n", file);
++        return NULL;
++    }
++
++    if (snprintf_s(file_name, file_str_size, file_str_size - 1, "%s%s",
++                   KERNEL_DAMON_PATH, file) == -1) {
++        etmemd_log(ETMEMD_LOG_ERR, "snprintf for damon file %s fail\n", file);
++        goto out;
++    }
++
++    fp = fopen(file_name, "r+");
++    if (fp == NULL) {
++        etmemd_log(ETMEMD_LOG_ERR, "open file %s fail\n", file_name);
++    }
++
++out:
++    free(file_name);
++    return fp;
++}
++
++static bool is_engs_valid(struct project *proj)
++{
++    struct engine *eng = proj->engs;
++
++    while (eng != NULL) {
++        if (strcmp(eng->name, "damon") != 0) {
++            etmemd_log(ETMEMD_LOG_ERR, "engine type %s not supported, only support damon engine in region scan\n",
++                       eng->name);
++            return false;
++        }
++        eng = eng->next;
++    }
++
++    return true;
++}
++
++static int get_damon_pids_val_and_num(struct task *tk, int *nr_tasks)
++{
++    while (tk != NULL) {
++        if (etmemd_get_task_pids(tk, false) != 0) {
++            etmemd_log(ETMEMD_LOG_ERR, "damon fail to get task pids\n");
++            *nr_tasks = 0;
++            return -1;
++        }
++        (*nr_tasks)++;
++        tk = tk->next;
++    }
++
++    return 0;
++}
++
++static char *get_damon_pids_str(struct task *tk, const int nr_tasks)
++{
++    char *pids = NULL;
++    size_t pids_size;
++    char tmp_pid[PID_STR_MAX_LEN + 2] = {0}; // plus 2 for space and '\0' follow pid
++
++    pids_size = (PID_STR_MAX_LEN + 1) * nr_tasks + 1;
++    pids = (char *)calloc(pids_size, sizeof(char));
++    if (pids == NULL) {
++        etmemd_log(ETMEMD_LOG_ERR, "malloc for pids in damon fail\n");
++        return NULL;
++    }
++
++    while (tk != NULL) {
++        if (snprintf_s(tmp_pid, PID_STR_MAX_LEN + 2, PID_STR_MAX_LEN + 1,
++                       "%u ", tk->pids->pid) == -1) {
++            etmemd_log(ETMEMD_LOG_WARN, "snprintf pid %u in damon fail\n", tk->pids->pid);
++            tk = tk->next;
++            continue;
++        }
++
++        if (strcat_s(pids, pids_size, tmp_pid) != EOK) {
++            etmemd_log(ETMEMD_LOG_WARN, "strcat pid %s fail\n", tmp_pid);
++        }
++        tk = tk->next;
++    }
++
++    return pids;
++}
++
++static int set_damon_target_ids(struct project *proj)
++{
++    FILE *fp = NULL;
++    int nr_tasks = 0;
++    struct task *tk = proj->engs->tasks;
++    char *pids_str = NULL;
++    size_t pids_len;
++    int ret = -1;
++
++    if (!is_engs_valid(proj)) {
++        goto out;
++    }
++
++    fp = get_damon_file(DAMON_PARAM_TARGET_IDS);
++    if (fp == NULL) {
++        goto out;
++    }
++
++    if (get_damon_pids_val_and_num(tk, &nr_tasks) != 0) {
++        goto out_close;
++    }
++
++    pids_str = get_damon_pids_str(tk, nr_tasks);
++    if (pids_str == NULL) {
++        goto out_close;
++    }
++
++    pids_len = strlen(pids_str);
++    if (pids_len == 0) {
++        etmemd_log(ETMEMD_LOG_ERR, "get all task pids fail in damon\n");
++        goto out_free;
++    }
++
++    if (fwrite(pids_str, sizeof(char), pids_len + 1, fp) != pids_len + 1) {
++        etmemd_log(ETMEMD_LOG_ERR, "write pids to damon fail\n");
++        goto out_free;
++    }
++    ret = 0;
++
++out_free:
++    free(pids_str);
++out_close:
++    fclose(fp);
++out:
++    return ret;
++}
++
++static char *get_damon_attrs_str(struct project *proj)
++{
++    char *attrs = NULL;
++    size_t attrs_size;
++    struct region_scan *reg_scan = (struct region_scan *)proj->scan_param;
++
++    attrs_size = (INT_MAX_LEN + 1) * NUM_OF_ATTRS;
++    attrs = (char *)calloc(attrs_size, sizeof(char));
++    if (attrs == NULL) {
++        etmemd_log(ETMEMD_LOG_ERR, "malloc for attrs in damon fail\n");
++        return NULL;
++    }
++
++    if (snprintf_s(attrs, attrs_size, attrs_size - 1, "%lu %lu %lu %lu %lu",
++                   reg_scan->sample_interval, reg_scan->aggr_interval,
++                   reg_scan->update_interval, reg_scan->min_nr_regions,
++                   reg_scan->max_nr_regions) == -1) {
++        etmemd_log(ETMEMD_LOG_ERR, "snprintf for attrs fail\n");
++        free(attrs);
++        return NULL;
++    }
++
++    return attrs;
++}
++
++static int set_damon_attrs(struct project *proj)
++{
++    FILE *fp = NULL;
++    char *attrs_str = NULL;
++    size_t attrs_len;
++    int ret = -1;
++    
++    fp = get_damon_file(DAMON_PARAM_ATTRS);
++    if (fp == NULL) {
++        goto out;
++    }
++
++    attrs_str = get_damon_attrs_str(proj);
++    if (attrs_str == NULL) {
++        goto out_close;
++    }
++
++    attrs_len = strlen(attrs_str);
++    if (fwrite(attrs_str, sizeof(char), attrs_len + 1, fp) != attrs_len + 1) {
++        etmemd_log(ETMEMD_LOG_ERR, "write attrs to damon fail\n");
++        goto out_free;
++    }
++    ret = 0;
++
++out_free:
++    free(attrs_str);
++out_close:
++    fclose(fp);
++out:
++    return ret;
++}
++
++static char *get_damon_schemes_str(struct project *proj)
++{
++    char *schemes = NULL;
++    size_t schemes_size;
++    struct damon_eng_params *params = (struct damon_eng_params *)proj->engs->params;
++
++    schemes_size = (INT_MAX_LEN + 1) * NUM_OF_SCHEMES;
++    schemes = (char *)calloc(schemes_size, sizeof(char));
++    if (schemes == NULL) {
++        etmemd_log(ETMEMD_LOG_ERR, "malloc for schemes in damon fail\n");
++        return NULL;
++    }
++
++    if (snprintf_s(schemes, schemes_size, schemes_size - 1, "%lu %lu %u %u %u %u %d",
++                   params->min_sz_region, params->max_sz_region,
++                   params->min_nr_accesses, params->max_nr_accesses,
++                   params->min_age_region, params->max_age_region,
++                   params->action) == -1) {
++        etmemd_log(ETMEMD_LOG_ERR, "snprintf for schemes fail\n");
++        free(schemes);
++        return NULL;
++    }
++
++    return schemes;
++}
++
++static int set_damon_schemes(struct project *proj)
++{
++    FILE *fp = NULL;
++    char *schemes_str = NULL;
++    size_t schemes_len;
++    int ret = -1;
++
++    fp = get_damon_file(DAMON_PARAM_SCHEMES);
++    if (fp == NULL) {
++        goto out;
++    }
++
++    schemes_str = get_damon_schemes_str(proj);
++    if (schemes_str == NULL) {
++        goto out_close;
++    }
++
++    schemes_len = strlen(schemes_str);
++    if (fwrite(schemes_str, sizeof(char), schemes_len + 1, fp) != schemes_len + 1) {
++        etmemd_log(ETMEMD_LOG_ERR, "write schemes to damon fail\n");
++        goto out_free;
++    }
++    ret = 0;
++
++out_free:
++    free(schemes_str);
++out_close:
++    fclose(fp);
++out:
++    return ret;
++}
++
++static char *get_damon_monitor_on_str(bool start)
++{
++    char *switch_str = NULL;
++    size_t switch_size;
++
++    switch_size = start ? ON_LEN + 1 : OFF_LEN + 1;
++    switch_str = (char *)calloc(switch_size, sizeof(char));
++    if (switch_str == NULL) {
++        etmemd_log(ETMEMD_LOG_ERR, "malloc for switch in damon fail\n");
++        return NULL;
++    }
++    if (snprintf_s(switch_str, switch_size, switch_size - 1, start ? "on" : "off") == -1) {
++        etmemd_log(ETMEMD_LOG_ERR, "snprintf for switch fail\n");
++        free(switch_str);
++        return NULL;
++    }
++
++    return switch_str;
++}
++
++static int set_damon_monitor_on(bool start)
++{
++    FILE *fp = NULL;
++    int ret = -1;
++    char *switch_str = NULL;
++    size_t switch_len;
++    
++    fp = get_damon_file(DAMON_PARAM_MONITOR_ON);
++    if (fp == NULL) {
++        goto out;
++    }
++
++    switch_str = get_damon_monitor_on_str(start);
++    if (switch_str == NULL) {
++        goto out_close;
++    }
++
++    switch_len = strlen(switch_str);
++    if (fwrite(switch_str, sizeof(char), switch_len + 1, fp) != switch_len + 1) {
++        etmemd_log(ETMEMD_LOG_ERR, "write monitor_on to damon fail\n");
++        goto out_free;
++    }
++    ret = 0;
++
++out_free:
++    free(switch_str);
++out_close:
++    fclose(fp);
++out:
++    return ret;
++}
++
++int etmemd_start_damon(struct project *proj)
++{
++    bool start = true;
++
++    if (proj == NULL) {
++        etmemd_log(ETMEMD_LOG_ERR, "proj should not be NULL\n");
++        return -1;
++    }
++
++    if (!check_damon_exist()) {
++        etmemd_log(ETMEMD_LOG_ERR, "kernel damon module not exist\n");
++        return -1;
++    }
++
++    if (set_damon_target_ids(proj) != 0) {
++        etmemd_log(ETMEMD_LOG_ERR, "set damon pids fail\n");
++        return -1;
++    }
++
++    if (set_damon_attrs(proj) != 0) {
++        etmemd_log(ETMEMD_LOG_ERR, "set damon attrs fail\n");
++        return -1;
++    }
++
++    if (set_damon_schemes(proj) != 0) {
++        etmemd_log(ETMEMD_LOG_ERR, "set damon schemes fail\n");
++        return -1;
++    }
++
++    if (set_damon_monitor_on(start) != 0) {
++        etmemd_log(ETMEMD_LOG_ERR, "set damon monitor_on to on fail\n");
++        return -1;
++    }
++
++    return 0;
++}
++
++int etmemd_stop_damon(void)
++{
++    bool start = false;
++
++    if (!check_damon_exist()) {
++        etmemd_log(ETMEMD_LOG_ERR, "kernel damon module not exist\n");
++        return -1;
++    }
++
++    if (set_damon_monitor_on(start) != 0) {
++        etmemd_log(ETMEMD_LOG_ERR, "set damon monitor_on to off fail\n");
++        return -1;
++    }
++
++    return 0;
++}
++
++static int fill_min_size(void *obj, void *val)
++{
++    struct damon_eng_params *params = (struct damon_eng_params *)obj;
++    unsigned long min_size = parse_to_ulong(val);
++
++    params->min_sz_region = min_size;
++    return 0;
++}
++
++static int fill_max_size(void *obj, void *val)
++{
++    struct damon_eng_params *params = (struct damon_eng_params *)obj;
++    unsigned long max_size = parse_to_ulong(val);
++
++    params->max_sz_region = max_size;
++    return 0;
++}
++
++static int fill_min_acc(void *obj, void *val)
++{
++    struct damon_eng_params *params = (struct damon_eng_params *)obj;
++    unsigned int min_acc = parse_to_uint(val);
++
++    params->min_nr_accesses = min_acc;
++    return 0;
++}
++
++static int fill_max_acc(void *obj, void *val)
++{
++    struct damon_eng_params *params = (struct damon_eng_params *)obj;
++    unsigned int max_acc = parse_to_uint(val);
++
++    params->max_nr_accesses = max_acc;
++    return 0;
++}
++
++static int fill_min_age(void *obj, void *val)
++{
++    struct damon_eng_params *params = (struct damon_eng_params *)obj;
++    unsigned int min_age = parse_to_uint(val);
++
++    params->min_age_region = min_age;
++    return 0;
++}
++
++static int fill_max_age(void *obj, void *val)
++{
++    struct damon_eng_params *params = (struct damon_eng_params *)obj;
++    unsigned int max_age = parse_to_uint(val);
++
++    params->max_age_region = max_age;
++    return 0;
++}
++
++static struct action_item damon_action_items[] = {
++    {"willneed", DAMOS_WILLNEED},
++    {"cold", DAMOS_COLD},
++    {"pageout", DAMOS_PAGEOUT},
++    {"hugepage", DAMOS_HUGEPAGE},
++    {"nohugepage", DAMOS_NOHUGEPAGE},
++    {"stat", DAMOS_STAT},
++};
++
++static int fill_action(void *obj, void *val)
++{
++    struct damon_eng_params *params = (struct damon_eng_params *)obj;
++    char *action = (char *)val;
++    unsigned int i;
++
++    for (i = 0; i < ARRAY_SIZE(damon_action_items); i++) {
++        if (strcmp(action, damon_action_items[i].action_str) == 0) {
++            params->action = damon_action_items[i].action_type;
++            free(action);
++            return 0;
++        }
++    }
++
++    free(action);
++    return -1;
++}
++
++static struct config_item damon_eng_config_items[] = {
++    {"min_size", INT_VAL, fill_min_size, false},
++    {"max_size", INT_VAL, fill_max_size, false},
++    {"min_acc", INT_VAL, fill_min_acc, false},
++    {"max_acc", INT_VAL, fill_max_acc, false},
++    {"min_age", INT_VAL, fill_min_age, false},
++    {"max_age", INT_VAL, fill_max_age, false},
++    {"action", STR_VAL, fill_action, false},
++};
++
++static int damon_fill_eng(GKeyFile *config, struct engine *eng)
++{
++    struct damon_eng_params *params = calloc(1, sizeof(struct damon_eng_params));
++
++    if (params == NULL) {
++        etmemd_log(ETMEMD_LOG_ERR, "alloc damon engine params fail\n");
++        return -1;
++    }
++
++    if (parse_file_config(config, ENG_GROUP, damon_eng_config_items,
++        ARRAY_SIZE(damon_eng_config_items), (void *)params) != 0) {
++        etmemd_log(ETMEMD_LOG_ERR, "damon fill engine params fail.\n");
++        free(params);
++        return -1;
++    }
++
++    eng->params = (void *)params;
++    return 0;
++}
++
++static void damon_clear_eng(struct engine *eng)
++{
++    struct damon_eng_params *eng_params = (struct damon_eng_params *)eng->params;
++
++    if (eng_params == NULL) {
++        return;
++    }
++
++    free(eng_params);
++    eng->params = NULL;
++}
++
++struct engine_ops g_damon_eng_ops = {
++    .fill_eng_params = damon_fill_eng,
++    .clear_eng_params = damon_clear_eng,
++    .fill_task_params = NULL,
++    .clear_task_params = NULL,
++    .start_task = NULL,
++    .stop_task = NULL,
++    .alloc_pid_params = NULL,
++    .free_pid_params = NULL,
++    .eng_mgt_func = NULL,
++};
++
++int fill_engine_type_damon(struct engine *eng, GKeyFile *config)
++{
++    eng->ops = &g_damon_eng_ops;
++    eng->engine_type = DAMON_ENGINE;
++    eng->name = "damon";
++    return 0;
++}
+diff --git a/etmem/src/etmemd_src/etmemd_engine.c b/etmem/src/etmemd_src/etmemd_engine.c
+index 6a14ecb..de17db7 100644
+--- a/etmem/src/etmemd_src/etmemd_engine.c
++++ b/etmem/src/etmemd_src/etmemd_engine.c
+@@ -19,6 +19,7 @@
+ #include "etmemd_slide.h"
+ #include "etmemd_cslide.h"
+ #include "etmemd_memdcd.h"
++#include "etmemd_damon.h"
+ #include "etmemd_thirdparty.h"
+ #include "etmemd_log.h"
+ #include "etmemd_common.h"
+@@ -38,6 +39,7 @@ static struct engine_add_item g_engine_add_items[] = {
+     {"slide", fill_engine_type_slide},
+     {"cslide", fill_engine_type_cslide},
+     {"memdcd", fill_engine_type_memdcd},
++    {"damon", fill_engine_type_damon},
+     {"thirdparty", fill_engine_type_thirdparty},
+ };
+ 
+diff --git a/etmem/src/etmemd_src/etmemd_file.c b/etmem/src/etmemd_src/etmemd_file.c
+index 8b478c6..b7dc27f 100644
+--- a/etmem/src/etmemd_src/etmemd_file.c
++++ b/etmem/src/etmemd_src/etmemd_file.c
+@@ -31,7 +31,7 @@ static int parse_item(GKeyFile *config, char *group_name, struct config_item *it
+ 
+     switch (item->type) {
+         case INT_VAL:
+-            val = (void *)(long long)g_key_file_get_integer(config, group_name, item->key, &error);
++            val = (void *)(long long)g_key_file_get_int64(config, group_name, item->key, &error);
+             break;
+         case STR_VAL:
+             val = (void *)g_key_file_get_string(config, group_name, item->key, &error);
+diff --git a/etmem/src/etmemd_src/etmemd_pool_adapter.c b/etmem/src/etmemd_src/etmemd_pool_adapter.c
+index 8c0068e..dfda3f4 100644
+--- a/etmem/src/etmemd_src/etmemd_pool_adapter.c
++++ b/etmem/src/etmemd_src/etmemd_pool_adapter.c
+@@ -18,6 +18,7 @@
+ #include <unistd.h>
+ #include "etmemd_pool_adapter.h"
+ #include "etmemd_engine.h"
++#include "etmemd_scan.h"
+ 
+ static void push_ctrl_workflow(struct task_pid **tk_pid, void *(*exector)(void *))
+ {
+@@ -77,6 +78,7 @@ static void *launch_threadtimer_executor(void *arg)
+ int start_threadpool_work(struct task_executor *executor)
+ {
+     struct task *tk = executor->tk;
++    struct page_scan *page_scan = (struct page_scan *)tk->eng->proj->scan_param;
+ 
+     etmemd_log(ETMEMD_LOG_DEBUG, "start etmem  for Task_value %s, project_name %s\n",
+                tk->value, tk->eng->proj->name);
+@@ -89,7 +91,7 @@ int start_threadpool_work(struct task_executor *executor)
+         return -1;
+     }
+ 
+-    tk->timer_inst = thread_timer_create(tk->eng->proj->interval);
++    tk->timer_inst = thread_timer_create(page_scan->interval);
+     if (tk->timer_inst == NULL) {
+         threadpool_stop_and_destroy(&tk->threadpool_inst);
+         etmemd_log(ETMEMD_LOG_ERR, "Timer task creation failed for project <%s> task <%s>.\n",
+diff --git a/etmem/src/etmemd_src/etmemd_project.c b/etmem/src/etmemd_src/etmemd_project.c
+index f7f1885..fa4293b 100644
+--- a/etmem/src/etmemd_src/etmemd_project.c
++++ b/etmem/src/etmemd_src/etmemd_project.c
+@@ -25,6 +25,7 @@
+ #include "securec.h"
+ #include "etmemd_project.h"
+ #include "etmemd_engine.h"
++#include "etmemd_damon.h"
+ #include "etmemd_common.h"
+ #include "etmemd_file.h"
+ #include "etmemd_log.h"
+@@ -34,6 +35,7 @@
+ #define MAX_LOOP_VALUE      120
+ 
+ #define MAX_OBJ_NAME_LEN    64
++#define MIN_NR_MIN_VAL      3
+ 
+ static SLIST_HEAD(project_list, project) g_projects = SLIST_HEAD_INITIALIZER(g_projects);
+ 
+@@ -452,9 +454,9 @@ static int fill_project_name(void *obj, void *val)
+     return 0;
+ }
+ 
+-static int fill_project_loop(void *obj, void *val)
++static int fill_page_scan_loop(void *obj, void *val)
+ {
+-    struct project *proj = (struct project *)obj;
++    struct page_scan *scan = (struct page_scan *)obj;
+     int loop = parse_to_int(val);
+     if (loop < 1 || loop > MAX_LOOP_VALUE) {
+         etmemd_log(ETMEMD_LOG_ERR, "invalid project loop value %d, it must be between 1 and %d.\n",
+@@ -462,13 +464,13 @@ static int fill_project_loop(void *obj, void *val)
+         return -1;
+     }
+ 
+-    proj->loop = loop;
++    scan->loop = loop;
+     return 0;
+ }
+ 
+-static int fill_project_interval(void *obj, void *val)
++static int fill_page_scan_interval(void *obj, void *val)
+ {
+-    struct project *proj = (struct project *)obj;
++    struct page_scan *scan = (struct page_scan *)obj;
+     int interval = parse_to_int(val);
+     if (interval < 1 || interval > MAX_INTERVAL_VALUE) {
+         etmemd_log(ETMEMD_LOG_ERR, "invalid project interval value %d, it must be between 1 and %d.\n",
+@@ -476,13 +478,13 @@ static int fill_project_interval(void *obj, void *val)
+         return -1;
+     }
+ 
+-    proj->interval = interval;
++    scan->interval = interval;
+     return 0;
+ }
+ 
+-static int fill_project_sleep(void *obj, void *val)
++static int fill_page_scan_sleep(void *obj, void *val)
+ {
+-    struct project *proj = (struct project *)obj;
++    struct page_scan *scan = (struct page_scan *)obj;
+     int sleep = parse_to_int(val);
+     if (sleep < 1 || sleep > MAX_SLEEP_VALUE) {
+         etmemd_log(ETMEMD_LOG_ERR, "invalid project sleep value %d, it must be between 1 and %d.\n",
+@@ -490,15 +492,147 @@ static int fill_project_sleep(void *obj, void *val)
+         return -1;
+     }
+ 
+-    proj->sleep = sleep;
++    scan->sleep = sleep;
++    return 0;
++}
++
++struct config_item g_page_scan_config_items[] = {
++    {"loop", INT_VAL, fill_page_scan_loop, false},
++    {"interval", INT_VAL, fill_page_scan_interval, false},
++    {"sleep", INT_VAL, fill_page_scan_sleep, false},
++};
++
++static int fill_region_scan_samp_interval(void *obj, void *val)
++{
++    struct region_scan *scan = (struct region_scan *)obj;
++    unsigned long samp_intvl = parse_to_ulong(val);
++
++    scan->sample_interval = samp_intvl;
++    return 0;
++}
++
++static int fill_region_scan_aggr_interval(void *obj, void *val)
++{
++    struct region_scan *scan = (struct region_scan *)obj;
++    unsigned long aggr_intvl = parse_to_ulong(val);
++
++    scan->aggr_interval = aggr_intvl;
++    return 0;
++}
++
++static int fill_region_scan_updt_interval(void *obj, void *val)
++{
++    struct region_scan *scan = (struct region_scan *)obj;
++    unsigned long updt_intvl = parse_to_ulong(val);
++
++    scan->update_interval = updt_intvl;
++    return 0;
++}
++
++static int fill_region_scan_min_nr(void *obj, void *val)
++{
++    struct region_scan *scan = (struct region_scan *)obj;
++    unsigned long min_nr = parse_to_ulong(val);
++
++    if (min_nr < MIN_NR_MIN_VAL) {
++        etmemd_log(ETMEMD_LOG_ERR, "invalid minimum nr value %d, it should not be smaller than %d.\n",
++                   min_nr, MIN_NR_MIN_VAL);
++        return -1;
++    }
++
++    scan->min_nr_regions = min_nr;
++    return 0;
++}
++
++static int fill_region_scan_max_nr(void *obj, void *val)
++{
++    struct region_scan *scan = (struct region_scan *)obj;
++    unsigned long max_nr = parse_to_ulong(val);
++
++    if (max_nr < MIN_NR_MIN_VAL) {
++        etmemd_log(ETMEMD_LOG_ERR, "invalid maximum nr value %d, it should not be smaller than %d.\n",
++                   max_nr, MIN_NR_MIN_VAL);
++        return -1;
++    }
++
++    scan->max_nr_regions = max_nr;
++    return 0;
++}
++
++struct config_item g_region_scan_config_items[] = {
++    {"sample_interval", INT_VAL, fill_region_scan_samp_interval, false},
++    {"aggr_interval", INT_VAL, fill_region_scan_aggr_interval, false},
++    {"update_interval", INT_VAL, fill_region_scan_updt_interval, false},
++    {"min_nr_regions", INT_VAL, fill_region_scan_min_nr, false},
++    {"max_nr_regions", INT_VAL, fill_region_scan_max_nr, false},
++};
++
++int scan_fill_by_conf(GKeyFile *config, struct project *proj)
++{
++    struct region_scan *rg_scan = NULL;
++
++    if (proj->type == PAGE_SCAN) {
++        if (parse_file_config(config, PROJ_GROUP, g_page_scan_config_items,
++                              ARRAY_SIZE(g_page_scan_config_items), proj->scan_param) != 0) {
++            etmemd_log(ETMEMD_LOG_ERR, "parse page scan config fail.\n");
++            return -1;
++        }
++    } else if (proj->type == REGION_SCAN) {
++        if (parse_file_config(config, PROJ_GROUP, g_region_scan_config_items,
++                              ARRAY_SIZE(g_region_scan_config_items), proj->scan_param) != 0) {
++            etmemd_log(ETMEMD_LOG_ERR, "parse region scan config fail.\n");
++            return -1;
++        }
++        rg_scan = (struct region_scan *)proj->scan_param;
++        if (rg_scan->min_nr_regions >= rg_scan->max_nr_regions) {
++            etmemd_log(ETMEMD_LOG_ERR, "min_nr_regions %d should be smaller than max_nr_regions %d.\n",
++                       rg_scan->min_nr_regions, rg_scan->max_nr_regions);
++            return -1;
++        }
++    }
++
++    return 0;
++}
++
++static int fill_project_scan_type(void *obj, void *val)
++{
++    struct project *proj = (struct project *)obj;
++    char *scan_type = (char *)val;
++
++    if (strcmp(scan_type, "page") != 0 && strcmp(scan_type, "region") != 0) {
++        etmemd_log(ETMEMD_LOG_ERR, "invalid scan type %s, must be page or region\n",
++                   scan_type);
++        return -1;
++    }
++
++    if (strcmp(scan_type, "page") == 0) {
++        struct page_scan *scan = NULL;
++
++        scan = (struct page_scan *)calloc(1, sizeof(struct page_scan));
++        if (scan == NULL) {
++            etmemd_log(ETMEMD_LOG_ERR, "malloc fail\n");
++            return -1;
++        }
++        proj->scan_param = (void *)scan;
++        proj->type = PAGE_SCAN;
++    } else {
++        struct region_scan *scan = NULL;
++
++        scan = (struct region_scan *)calloc(1, sizeof(struct region_scan));
++        if (scan == NULL) {
++            etmemd_log(ETMEMD_LOG_ERR, "malloc fail\n");
++            return -1;
++        }
++        proj->scan_param = (void *)scan;
++        proj->type = REGION_SCAN;
++    }
++
+     return 0;
+ }
+ 
+ static struct config_item g_project_config_items[] = {
+     {"name", STR_VAL, fill_project_name, false},
+-    {"loop", INT_VAL, fill_project_loop, false},
+-    {"interval", INT_VAL, fill_project_interval, false},
+-    {"sleep", INT_VAL, fill_project_sleep, false},
++    {"scan_type", STR_VAL, fill_project_scan_type, false},
+ };
+ 
+ static void clear_project(struct project *proj)
+@@ -507,6 +641,11 @@ static void clear_project(struct project *proj)
+         free(proj->name);
+         proj->name = NULL;
+     }
++
++    if (proj->scan_param != NULL) {
++        free(proj->scan_param);
++        proj->scan_param = NULL;
++    }
+ }
+ 
+ static int project_fill_by_conf(GKeyFile *config, struct project *proj)
+@@ -555,6 +694,13 @@ enum opt_result etmemd_project_add(GKeyFile *config)
+         proj = NULL;
+         return OPT_INVAL;
+     }
++    if (scan_fill_by_conf(config, proj) != 0) {
++        etmemd_log(ETMEMD_LOG_ERR, "fill scan parameter from configuration file fail\n");
++        clear_project(proj);
++        free(proj);
++        proj = NULL;
++        return OPT_INVAL;
++    }
+ 
+     SLIST_INSERT_HEAD(&g_projects, proj, entry);
+     return OPT_SUCCESS;
+@@ -665,9 +811,22 @@ enum opt_result etmemd_migrate_start(const char *project_name)
+         return OPT_PRO_STARTED;
+     }
+ 
+-    if (start_tasks(proj) != 0) {
+-        etmemd_log(ETMEMD_LOG_ERR, "some task of project %s start fail\n", project_name);
+-        return OPT_INTER_ERR;
++    switch (proj->type) {
++        case PAGE_SCAN:
++            if (start_tasks(proj) != 0) {
++                etmemd_log(ETMEMD_LOG_ERR, "some task of project %s start fail\n", project_name);
++                return OPT_INTER_ERR;
++            }
++            break;
++        case REGION_SCAN:
++            if (etmemd_start_damon(proj) != 0) {
++                etmemd_log(ETMEMD_LOG_ERR, "start damon of project %s fail\n", project_name);
++                return OPT_INTER_ERR;
++            }
++            break;
++        default:
++            etmemd_log(ETMEMD_LOG_ERR, "scan type %d not support\n", proj->type);
++            return OPT_INVAL;
+     }
+ 
+     proj->start = true;
+@@ -694,9 +853,23 @@ enum opt_result etmemd_migrate_stop(const char *project_name)
+                    proj->name);
+         return OPT_PRO_STOPPED;
+     }
+-    stop_tasks(proj);
+-    proj->start = false;
+ 
++    switch (proj->type) {
++        case PAGE_SCAN:
++            stop_tasks(proj);
++            break;
++        case REGION_SCAN:
++            if (etmemd_stop_damon() != 0) {
++                etmemd_log(ETMEMD_LOG_ERR, "stop damon of project %s fail\n", project_name);
++                return OPT_INTER_ERR;
++            }
++            break;
++        default:
++            etmemd_log(ETMEMD_LOG_ERR, "scan type %d not support\n", proj->type);
++            return OPT_INVAL;
++    }
++
++    proj->start = false;
+     return OPT_SUCCESS;
+ }
+ 
+diff --git a/etmem/src/etmemd_src/etmemd_scan.c b/etmem/src/etmemd_src/etmemd_scan.c
+index fec6373..3ee018e 100644
+--- a/etmem/src/etmemd_src/etmemd_scan.c
++++ b/etmem/src/etmemd_src/etmemd_scan.c
+@@ -761,6 +761,8 @@ struct page_refs *etmemd_do_scan(const struct task_pid *tpid, const struct task
+         return NULL;
+     }
+ 
++    struct page_scan *page_scan = (struct page_scan *)tk->eng->proj->scan_param;
++
+     if (snprintf_s(pid, PID_STR_MAX_LEN, PID_STR_MAX_LEN - 1, "%u", tpid->pid) <= 0) {
+         etmemd_log(ETMEMD_LOG_ERR, "snprintf pid fail %u", tpid->pid);
+         return NULL;
+@@ -774,7 +776,7 @@ struct page_refs *etmemd_do_scan(const struct task_pid *tpid, const struct task
+     }
+ 
+     /* loop for scanning idle_pages to get result of memory access. */
+-    for (i = 0; i < tk->eng->proj->loop; i++) {
++    for (i = 0; i < page_scan->loop; i++) {
+         ret = get_page_refs(vmas, pid, &page_refs, NULL, 0);
+         if (ret != 0) {
+             etmemd_log(ETMEMD_LOG_ERR, "scan operation failed\n");
+@@ -783,7 +785,7 @@ struct page_refs *etmemd_do_scan(const struct task_pid *tpid, const struct task
+             page_refs = NULL;
+             break;
+         }
+-        sleep((unsigned)tk->eng->proj->sleep);
++        sleep((unsigned)page_scan->sleep);
+     }
+ 
+     free_vmas(vmas);
+@@ -841,6 +843,7 @@ void clean_page_sort_unexpected(void *arg)
+ struct page_sort *alloc_page_sort(const struct task_pid *tpid)
+ {
+     struct page_sort *page_sort = NULL;
++    struct page_scan *page_scan = (struct page_scan *)tpid->tk->eng->proj->scan_param;
+ 
+     page_sort = (struct page_sort *)calloc(1, sizeof(struct page_sort));
+     if (page_sort == NULL) {
+@@ -848,9 +851,9 @@ struct page_sort *alloc_page_sort(const struct task_pid *tpid)
+         return NULL;
+     }
+ 
+-    page_sort->loop = tpid->tk->eng->proj->loop;
++    page_sort->loop = page_scan->loop;
+ 
+-    page_sort->page_refs_sort = (struct page_refs **)calloc((tpid->tk->eng->proj->loop + 1), sizeof(struct page_refs *));
++    page_sort->page_refs_sort = (struct page_refs **)calloc((page_scan->loop + 1), sizeof(struct page_refs *));
+     if (page_sort->page_refs_sort == NULL) {
+         etmemd_log(ETMEMD_LOG_ERR, "calloc page refs sort failed.\n");
+         free(page_sort);
+diff --git a/etmem/src/etmemd_src/etmemd_slide.c b/etmem/src/etmemd_src/etmemd_slide.c
+index 45db00a..8362224 100644
+--- a/etmem/src/etmemd_src/etmemd_slide.c
++++ b/etmem/src/etmemd_src/etmemd_slide.c
+@@ -35,6 +35,7 @@ static struct memory_grade *slide_policy_interface(struct page_sort **page_sort,
+     struct memory_grade *memory_grade = NULL;
+     unsigned long need_2_swap_num;
+     volatile uint64_t count = 0;
++    struct page_scan *page_scan = (struct page_scan *)tpid->tk->eng->proj->scan_param;
+ 
+     if (slide_params == NULL) {
+         etmemd_log(ETMEMD_LOG_ERR, "cannot get params for slide\n");
+@@ -65,7 +66,7 @@ static struct memory_grade *slide_policy_interface(struct page_sort **page_sort,
+     if (need_2_swap_num == 0)
+         goto count_out;
+ 
+-    for (int i = 0; i < tpid->tk->eng->proj->loop + 1; i++) {
++    for (int i = 0; i < page_scan->loop + 1; i++) {
+         page_refs = &((*page_sort)->page_refs_sort[i]);
+ 
+         while (*page_refs != NULL) {
+@@ -201,6 +202,7 @@ static struct config_item g_slide_task_config_items[] = {
+ static int slide_fill_task(GKeyFile *config, struct task *tk)
+ {
+     struct slide_params *params = calloc(1, sizeof(struct slide_params));
++    struct page_scan *page_scan = (struct page_scan *)tk->eng->proj->scan_param;
+ 
+     if (params == NULL) {
+         etmemd_log(ETMEMD_LOG_ERR, "alloc slide param fail\n");
+@@ -213,7 +215,7 @@ static int slide_fill_task(GKeyFile *config, struct task *tk)
+         goto free_params;
+     }
+ 
+-    if (params->t > tk->eng->proj->loop * WRITE_TYPE_WEIGHT) {
++    if (params->t > page_scan->loop * WRITE_TYPE_WEIGHT) {
+         etmemd_log(ETMEMD_LOG_ERR, "engine param T must less than loop.\n");
+         goto free_params;
+     }
+-- 
+1.8.3.1
+
