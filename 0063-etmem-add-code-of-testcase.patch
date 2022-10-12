@@ -1,0 +1,864 @@
+From 95029b0ae49082d660330042c6c2becc9133124d Mon Sep 17 00:00:00 2001
+From: liubo <liubo254@huawei.com>
+Date: Thu, 3 Mar 2022 10:25:08 +0800
+Subject: [PATCH 13/33] etmem: add code of testcase
+
+add code of testcase for etmem scan function
+add code of testcase for etmem threadpool function
+add code of testcase for etmem threadtimer function
+
+Signed-off-by: liubo <liubo254@huawei.com>
+---
+ .../etmem_scan_ops_export_llt_test/CMakeLists.txt  |  26 ++
+ .../etmem_scan_ops_export_llt.c                    | 279 +++++++++++++++++++++
+ .../etmem_threadpool_ops_llt_test/CMakeLists.txt   |  26 ++
+ .../etmem_threadpool_ops_llt.c                     | 260 +++++++++++++++++++
+ etmem/test/etmem_timer_ops_llt_test/CMakeLists.txt |  26 ++
+ .../etmem_timer_ops_llt_test/etmem_timer_ops_llt.c | 183 ++++++++++++++
+ 6 files changed, 800 insertions(+)
+ create mode 100644 etmem/test/etmem_scan_ops_export_llt_test/CMakeLists.txt
+ create mode 100644 etmem/test/etmem_scan_ops_export_llt_test/etmem_scan_ops_export_llt.c
+ create mode 100644 etmem/test/etmem_threadpool_ops_llt_test/CMakeLists.txt
+ create mode 100644 etmem/test/etmem_threadpool_ops_llt_test/etmem_threadpool_ops_llt.c
+ create mode 100644 etmem/test/etmem_timer_ops_llt_test/CMakeLists.txt
+ create mode 100644 etmem/test/etmem_timer_ops_llt_test/etmem_timer_ops_llt.c
+
+diff --git a/etmem/test/etmem_scan_ops_export_llt_test/CMakeLists.txt b/etmem/test/etmem_scan_ops_export_llt_test/CMakeLists.txt
+new file mode 100644
+index 0000000..be68154
+--- /dev/null
++++ b/etmem/test/etmem_scan_ops_export_llt_test/CMakeLists.txt
+@@ -0,0 +1,26 @@
++# /******************************************************************************
++#  * Copyright (c) Huawei Technologies Co., Ltd. 2019-2021. All rights reserved.
++#  * etmem is licensed under the Mulan PSL v2.
++#  * You can use this software according to the terms and conditions of the Mulan PSL v2.
++#  * You may obtain a copy of Mulan PSL v2 at:
++#  *     http://license.coscl.org.cn/MulanPSL2
++#  * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR
++#  * IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY OR FIT FOR A PARTICULAR
++#  * PURPOSE.
++#  * See the Mulan PSL v2 for more details.
++#  * Author: shikemeng
++#  * Create: 2021-11-30
++#  * Description: CMakefileList for etmem_scan_ops_llt_test
++#  ******************************************************************************/
++
++project(etmem)
++
++INCLUDE_DIRECTORIES(../../inc/etmem_inc)
++INCLUDE_DIRECTORIES(../../inc/etmemd_inc)
++INCLUDE_DIRECTORIES(${GLIB2_INCLUDE_DIRS})
++
++SET(EXE etmem_scan_ops_export_llt)
++
++add_executable(${EXE} etmem_scan_ops_export_llt.c)
++
++target_link_libraries(${EXE} cunit ${BUILD_DIR}/lib/libetmemd.so pthread dl rt libboundscheck numa ${GLIB2_LIBRARIES})
+diff --git a/etmem/test/etmem_scan_ops_export_llt_test/etmem_scan_ops_export_llt.c b/etmem/test/etmem_scan_ops_export_llt_test/etmem_scan_ops_export_llt.c
+new file mode 100644
+index 0000000..e8e6098
+--- /dev/null
++++ b/etmem/test/etmem_scan_ops_export_llt_test/etmem_scan_ops_export_llt.c
+@@ -0,0 +1,279 @@
++/******************************************************************************
++ * Copyright (c) Huawei Technologies Co., Ltd. 2019-2021. All rights reserved.
++ * etmem is licensed under the Mulan PSL v2.
++ * You can use this software according to the terms and conditions of the Mulan PSL v2.
++ * You may obtain a copy of Mulan PSL v2 at:
++ * http://license.coscl.org.cn/MulanPSL2
++ * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR
++ * IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY OR FIT FOR A PARTICULAR
++ * PURPOSE.
++ * See the Mulan PSL v2 for more details.
++ * Author: yangkunlin
++ * Create: 2021-11-30
++ * Description: test for the export scan library
++ ******************************************************************************/
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++
++#include <CUnit/Basic.h>
++#include <CUnit/Automated.h>
++#include <CUnit/Console.h>
++
++#include "etmemd_scan_export.h"
++
++/* normal init and exit */
++static void test_etmem_exp_scan_001(void)
++{
++    /* for test of exit without init*/
++    etmemd_scan_exit();
++
++    CU_ASSERT_EQUAL(etmemd_scan_init(), 0);
++    etmemd_scan_exit();
++}
++
++static void test_etmem_exp_scan_002(void)
++{
++    /* for test of exit without init*/
++    etmemd_scan_exit();
++
++    CU_ASSERT_EQUAL(etmemd_scan_init(), 0);
++
++    /* init again before exit */
++    CU_ASSERT_NOT_EQUAL(etmemd_scan_init(), 0);
++    etmemd_scan_exit();
++}
++
++static void check_vmas(struct vmas *vmas)
++{
++    int i;
++    struct vma *curr_vma = NULL;
++
++    CU_ASSERT_NOT_EQUAL(vmas->vma_cnt, 0);
++
++    curr_vma = vmas->vma_list;
++    for (i = 0; i < vmas->vma_cnt; i++) {
++        CU_ASSERT_PTR_NOT_NULL(curr_vma);
++        curr_vma = curr_vma->next;
++    }
++}
++
++/* test invalid get_vmas */
++static void test_etmem_exp_scan_004(void)
++{
++    const char *pid = "1";
++    char *vmflags_array[10] = {"rd"};
++    int vmflag_num = 1;
++    int is_anon_only = false;
++    struct vmas *vmas = NULL;
++
++    CU_ASSERT_EQUAL(etmemd_scan_init(), 0);
++
++    /* non-exist pid */
++    vmas = etmemd_get_vmas("0", vmflags_array, vmflag_num, is_anon_only);
++    CU_ASSERT_PTR_NULL(vmas);
++
++    /* pid is NULL */
++    vmas = etmemd_get_vmas(NULL, vmflags_array, vmflag_num, is_anon_only);
++    CU_ASSERT_PTR_NULL(vmas);
++
++    /* pid contains invalid characters */
++    vmas = etmemd_get_vmas("1-", vmflags_array, vmflag_num, is_anon_only);
++    CU_ASSERT_PTR_NULL(vmas);
++
++    /* vmflags contains space */
++    vmflags_array[0] = "r ";
++    vmas = etmemd_get_vmas(pid, vmflags_array, vmflag_num, is_anon_only);
++    CU_ASSERT_PTR_NULL(vmas);
++
++    /* vmflags length is not 2 */
++    vmflags_array[0] = "rd ";
++    vmas = etmemd_get_vmas(pid, vmflags_array, vmflag_num, is_anon_only);
++    CU_ASSERT_PTR_NULL(vmas);
++
++    /* vmflags is NULL */
++    vmflags_array[0] = NULL;
++    vmas = etmemd_get_vmas(pid, vmflags_array, vmflag_num, is_anon_only);
++    CU_ASSERT_PTR_NULL(vmas);
++
++    /* test free is NULL */
++    vmas = NULL;
++    etmemd_free_vmas(vmas);
++
++    etmemd_scan_exit();
++}
++
++
++/* test valid get_vmas */
++static void test_etmem_exp_scan_003(void)
++{
++    const char *pid = "1";
++    char *vmflags_array[10] = {"rd"};
++    int vmflag_num = 1;
++    int is_anon_only = false;
++    struct vmas *vmas = NULL;
++    struct vma *curr_vma = NULL;
++    int i;
++
++    /* get vmas without init */
++    vmas = etmemd_get_vmas(pid, vmflags_array, vmflag_num, is_anon_only);
++    CU_ASSERT_PTR_NOT_NULL(vmas);
++    check_vmas(vmas);
++    etmemd_free_vmas(vmas);
++
++    /* get vmas with init */
++    CU_ASSERT_EQUAL(etmemd_scan_init(), 0);
++    vmas = etmemd_get_vmas(pid, vmflags_array, vmflag_num, is_anon_only);
++    CU_ASSERT_PTR_NOT_NULL(vmas);
++    check_vmas(vmas);
++    etmemd_free_vmas(vmas);
++    etmemd_scan_exit();
++}
++
++/* test invalid get_page_refs */
++static void test_etmem_exp_scan_006(void)
++{
++    const char *pid = "1";
++    char *vmflags_array[10] = {"rd"};
++    int vmflag_num = 1;
++    int is_anon_only = false;
++    struct vmas *vmas = NULL;
++    struct page_refs *page_refs = NULL;
++    int flags = SCAN_AS_HUGE | SCAN_IGN_HOST;
++
++    CU_ASSERT_EQUAL(etmemd_scan_init(), 0);
++
++    /* free null pointer */
++    etmemd_free_page_refs(page_refs);
++
++    /* vmas is NULL */
++    CU_ASSERT_EQUAL(etmemd_get_page_refs(vmas, pid, &page_refs, flags), -1);
++
++    /* vmas address range invalid*/
++    vmas = (struct vmas *)calloc(1, sizeof(struct vmas));
++    CU_ASSERT_PTR_NOT_NULL(vmas);
++    vmas->vma_cnt = 1;
++
++    struct vma *vma = (struct vma *)calloc(1, sizeof(struct vma));
++    CU_ASSERT_PTR_NOT_NULL(vma);
++    vma->start = 0x0ff;
++    vma->end = 0x000;
++    vma->next = NULL;
++    vmas->vma_list = vma;
++
++    CU_ASSERT_EQUAL(etmemd_get_page_refs(vmas, pid, &page_refs, flags), -1);
++    etmemd_free_vmas(vmas);
++
++    vmas = etmemd_get_vmas(pid, vmflags_array, vmflag_num, is_anon_only);
++    CU_ASSERT_PTR_NOT_NULL(vmas);
++    check_vmas(vmas);
++
++    /* pid not exist */
++    CU_ASSERT_EQUAL(etmemd_get_page_refs(vmas, "0", &page_refs, flags), -1);
++    CU_ASSERT_PTR_NULL(page_refs);
++
++    /* pid is NULL */
++    CU_ASSERT_EQUAL(etmemd_get_page_refs(vmas, NULL, &page_refs, flags), -1);
++    CU_ASSERT_PTR_NULL(page_refs);
++
++    /* pid contains invalid chars */
++    CU_ASSERT_EQUAL(etmemd_get_page_refs(vmas, "--", &page_refs, flags), -1);
++    CU_ASSERT_PTR_NULL(page_refs);
++
++    etmemd_free_page_refs(page_refs);
++    etmemd_free_vmas(vmas);
++    etmemd_scan_exit();
++}
++
++/* test valid get_page_refs */
++static void test_etmem_exp_scan_005(void)
++{
++    CU_ASSERT_EQUAL(etmemd_scan_init(), 0);
++
++    const char *pid = "1";
++    char *vmflags_array[10] = {"rd"};
++    int vmflag_num = 1;
++    int is_anon_only = false;
++    struct vmas *vmas = NULL;
++    struct page_refs *page_refs = NULL;
++    int flags = SCAN_AS_HUGE | SCAN_IGN_HOST;
++
++    vmas = etmemd_get_vmas(pid, vmflags_array, vmflag_num, is_anon_only);
++    CU_ASSERT_PTR_NOT_NULL(vmas);
++    check_vmas(vmas);
++
++    CU_ASSERT_EQUAL(etmemd_get_page_refs(vmas, pid, &page_refs, flags), 0);
++    CU_ASSERT_PTR_NOT_NULL(page_refs);
++
++    etmemd_scan_exit();
++
++    /* get_page_refs after exit */
++    CU_ASSERT_NOT_EQUAL(etmemd_get_page_refs(vmas, pid, &page_refs, flags), 0);
++
++    etmemd_free_page_refs(page_refs);
++    etmemd_free_vmas(vmas);
++}
++
++typedef enum {
++    CUNIT_SCREEN = 0,
++    CUNIT_XMLFILE,
++    CUNIT_CONSOLE
++} cu_run_mode;
++
++int main(int argc, const char **argv)
++{
++    CU_pSuite suite;
++    CU_pTest pTest;
++    unsigned int num_failures;
++    cu_run_mode cunit_mode = CUNIT_SCREEN;
++    int error_num;
++
++    if (argc > 1) {
++        cunit_mode = atoi(argv[1]);
++    }
++
++    if (CU_initialize_registry() != CUE_SUCCESS) {
++        return CU_get_error();
++    }
++
++    suite = CU_add_suite("etmem_scan_ops_exp", NULL, NULL);
++    if (suite == NULL) {
++        goto ERROR;
++    }
++
++    if (CU_ADD_TEST(suite, test_etmem_exp_scan_001) == NULL ||
++        CU_ADD_TEST(suite, test_etmem_exp_scan_002) == NULL ||
++        CU_ADD_TEST(suite, test_etmem_exp_scan_003) == NULL ||
++        CU_ADD_TEST(suite, test_etmem_exp_scan_004) == NULL ||
++        CU_ADD_TEST(suite, test_etmem_exp_scan_005) == NULL ||
++        CU_ADD_TEST(suite, test_etmem_exp_scan_006) == NULL) {
++            goto ERROR;
++    }
++
++    switch (cunit_mode) {
++        case CUNIT_SCREEN:
++            CU_basic_set_mode(CU_BRM_VERBOSE);
++            CU_basic_run_tests();
++            break;
++        case CUNIT_XMLFILE:
++            CU_set_output_filename("etmemd_scan.c");
++            CU_automated_run_tests();
++            break;
++        case CUNIT_CONSOLE:
++            CU_console_run_tests();
++            break;
++        default:
++            printf("not support cunit mode, only support: "
++                   "0 for CUNIT_SCREEN, 1 for CUNIT_XMLFILE, 2 for CUNIT_CONSOLE\n");
++            goto ERROR;
++    }
++
++    num_failures = CU_get_number_of_failures();
++    CU_cleanup_registry();
++    return num_failures;
++
++ERROR:
++    error_num = CU_get_error();
++    CU_cleanup_registry();
++    return -error_num;
++}
+diff --git a/etmem/test/etmem_threadpool_ops_llt_test/CMakeLists.txt b/etmem/test/etmem_threadpool_ops_llt_test/CMakeLists.txt
+new file mode 100644
+index 0000000..cb084cf
+--- /dev/null
++++ b/etmem/test/etmem_threadpool_ops_llt_test/CMakeLists.txt
+@@ -0,0 +1,26 @@
++# /******************************************************************************
++#  * Copyright (c) Huawei Technologies Co., Ltd. 2019-2021. All rights reserved.
++#  * etmem is licensed under the Mulan PSL v2.
++#  * You can use this software according to the terms and conditions of the Mulan PSL v2.
++#  * You may obtain a copy of Mulan PSL v2 at:
++#  *     http://license.coscl.org.cn/MulanPSL2
++#  * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR
++#  * IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY OR FIT FOR A PARTICULAR
++#  * PURPOSE.
++#  * See the Mulan PSL v2 for more details.
++#  * Author: liubo
++#  * Create: 2021-11-30
++#  * Description: CMakefileList for etmem_threadpool_ops_llt_test
++#  ******************************************************************************/
++
++project(etmem)
++
++INCLUDE_DIRECTORIES(../../inc/etmem_inc)
++INCLUDE_DIRECTORIES(../../inc/etmemd_inc)
++INCLUDE_DIRECTORIES(${GLIB2_INCLUDE_DIRS})
++
++SET(EXE etmem_threadpool_ops_llt)
++
++add_executable(${EXE} etmem_threadpool_ops_llt.c)
++
++target_link_libraries(${EXE} cunit ${BUILD_DIR}/lib/libetmemd.so pthread dl rt libboundscheck numa ${GLIB2_LIBRARIES})
+diff --git a/etmem/test/etmem_threadpool_ops_llt_test/etmem_threadpool_ops_llt.c b/etmem/test/etmem_threadpool_ops_llt_test/etmem_threadpool_ops_llt.c
+new file mode 100644
+index 0000000..9917954
+--- /dev/null
++++ b/etmem/test/etmem_threadpool_ops_llt_test/etmem_threadpool_ops_llt.c
+@@ -0,0 +1,260 @@
++/******************************************************************************
++ * Copyright (c) Huawei Technologies Co., Ltd. 2019-2021. All rights reserved.
++ * etmem is licensed under the Mulan PSL v2.
++ * You can use this software according to the terms and conditions of the Mulan PSL v2.
++ * You may obtain a copy of Mulan PSL v2 at:
++ * http://license.coscl.org.cn/MulanPSL2
++ * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR
++ * IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY OR FIT FOR A PARTICULAR
++ * PURPOSE.
++ * See the Mulan PSL v2 for more details.
++ * Author: liubo
++ * Create: 2020-08-13
++ * Description: test for etmem threadpool operations
++ ******************************************************************************/
++#include <sys/file.h>
++#include <sys/sysinfo.h>
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++#include <stdbool.h>
++#include <unistd.h>
++#include <limits.h>
++#include <glib.h>
++#include <pthread.h>
++
++#include <CUnit/Basic.h>
++#include <CUnit/Automated.h>
++#include <CUnit/Console.h>
++
++#include "etmemd_threadpool.h"
++#include "etmemd_pool_adapter.h"
++#include "etmemd_project.h"
++#include "etmemd_file.h"
++#include "etmemd_common.h"
++#include "etmemd_engine.h"
++#include "etmemd_slide.h"
++#include "etmemd_cslide.h"
++#include "securec.h"
++
++#define ADD_WORKER_NUM 100
++typedef void *(*add_worker_exector)(void *);
++
++static struct task_executor g_test_exec;
++static int g_task_exe_time = 0;
++static struct engine_ops g_test_eng_ops = {
++    .alloc_pid_params = NULL,
++    .free_pid_params = NULL,
++};
++
++static void get_threadpool_create_num(int num, int exp)
++{
++    thread_pool *pool = NULL;
++
++    pool = threadpool_create(num);
++    CU_ASSERT_PTR_NOT_NULL(pool);
++
++    CU_ASSERT_EQUAL(pool->max_thread_cap, exp);
++    threadpool_stop_and_destroy(&pool);
++}
++
++static void test_threadpool_create(void)
++{
++    int core = get_nprocs();
++
++    get_threadpool_create_num(1, 1);
++    get_threadpool_create_num(2, 2);
++    get_threadpool_create_num(2 * core, 2 * core);
++    get_threadpool_create_num(2 * core + 1, 2 * core + 1);
++
++    threadpool_notify(NULL);
++    threadpool_reset_status(NULL);
++}
++
++static void test_threadpool_delete(void)
++{
++    thread_pool *pool = NULL;
++    threadpool_stop_and_destroy(&pool);
++
++    pool = threadpool_create(1);
++    CU_ASSERT_PTR_NOT_NULL(pool);
++
++    threadpool_stop_and_destroy(&pool);
++    CU_ASSERT_PTR_NULL(pool);
++}
++
++static void *add_worker_fun(void *str)
++{
++    char *temp_str = str;
++    printf("str: %s \n", temp_str);
++    return NULL;
++}
++
++static unsigned int get_workerlist_num(const thread_pool *pool)
++{
++    unsigned int num = 0;
++    thread_worker *worker = pool->worker_list;
++
++    while (worker) {
++        num++;
++        worker = worker->next_node;
++    }
++
++    return num;
++}
++
++static void test_thpool_addwk_single(void)
++{
++    char *args = "for add worker test.\n";
++    thread_pool *pool = NULL;
++    add_worker_exector exector = add_worker_fun;
++
++    pool = threadpool_create(1);
++    CU_ASSERT_PTR_NOT_NULL(pool);
++
++    CU_ASSERT_EQUAL(threadpool_add_worker(pool, NULL, NULL), -1);
++    CU_ASSERT_EQUAL(threadpool_add_worker(pool, exector, NULL), -1);
++    CU_ASSERT_EQUAL(threadpool_add_worker(pool, NULL, args), -1);
++    CU_ASSERT_EQUAL(threadpool_add_worker(pool, exector, args), 0);
++
++    CU_ASSERT_PTR_NOT_NULL(pool->worker_list);
++    CU_ASSERT_EQUAL(get_workerlist_num(pool), 1);
++
++    threadpool_stop_and_destroy(&pool);
++    CU_ASSERT_PTR_NULL(pool);
++}
++
++static void test_thpool_addwk_mul(void)
++{
++    char *args = "for add worker test.\n";
++    thread_pool *pool = NULL;
++    int add_num;
++    add_worker_exector exector = add_worker_fun;
++
++    pool = threadpool_create(1);
++    CU_ASSERT_PTR_NOT_NULL(pool);
++
++    for (add_num = 0; add_num < ADD_WORKER_NUM; add_num++) {
++        CU_ASSERT_EQUAL(threadpool_add_worker(pool, exector, args), 0);
++    }
++
++    CU_ASSERT_PTR_NOT_NULL(pool->worker_list);
++    CU_ASSERT_EQUAL(__atomic_load_n(&pool->scheduing_size, __ATOMIC_SEQ_CST), ADD_WORKER_NUM);
++
++    threadpool_stop_and_destroy(&pool);
++    CU_ASSERT_PTR_NULL(pool);
++}
++
++static void init_thpool_objs(struct project *proj, struct engine *eng, struct task *tk)
++{
++    proj->interval = 1;
++    proj->start = true;
++    proj->name = "test_project";
++    eng->proj = proj;
++    eng->ops = &g_test_eng_ops;
++    tk->eng = eng;
++    tk->type = "pid";
++    tk->value = "1";
++    tk->max_threads = 10;
++}
++
++static void test_thpool_start_error(void)
++{
++    struct task tk;
++    struct engine eng;
++    struct project proj;
++
++    init_thpool_objs(&proj, &eng, &tk);
++
++    tk.max_threads = 0;
++    g_test_exec.tk = &tk;
++
++    CU_ASSERT_EQUAL(start_threadpool_work(&g_test_exec), -1);
++}
++
++static void *task_executor(void *arg)
++{
++    g_task_exe_time++;
++    return NULL;
++}
++
++static void test_thpool_start_stop(void)
++{
++    struct task tk = {0};
++    struct engine eng = {0};
++    struct project proj = {0};
++
++    init_thpool_objs(&proj, &eng, &tk);
++
++    g_test_exec.tk = &tk;
++    g_test_exec.func = task_executor;
++
++    CU_ASSERT_EQUAL(start_threadpool_work(&g_test_exec), 0);
++    /* wait threadpool to work */
++    sleep(2);
++    stop_and_delete_threadpool_work(&tk);
++}
++
++typedef enum {
++    CUNIT_SCREEN = 0,
++    CUNIT_XMLFILE,
++    CUNIT_CONSOLE
++} cu_run_mode;
++
++int main(int argc, const char **argv)
++{
++    CU_pSuite suite;
++    CU_pTest pTest;
++    unsigned int num_failures;
++    cu_run_mode cunit_mode = CUNIT_SCREEN;
++    int error_num;
++
++    if (argc > 1) {
++        cunit_mode = atoi(argv[1]);
++    }
++
++    if (CU_initialize_registry() != CUE_SUCCESS) {
++        return CU_get_error();
++    }
++
++    suite = CU_add_suite("etmem_threadpool_ops", NULL, NULL);
++    if (suite == NULL) {
++        goto ERROR;
++    }
++
++    if (CU_ADD_TEST(suite, test_threadpool_create) == NULL ||
++        CU_ADD_TEST(suite, test_threadpool_delete) == NULL ||
++        CU_ADD_TEST(suite, test_thpool_addwk_single) == NULL ||
++        CU_ADD_TEST(suite, test_thpool_addwk_mul) == NULL ||
++        CU_ADD_TEST(suite, test_thpool_start_stop) == NULL ||
++        CU_ADD_TEST(suite, test_thpool_start_error) == NULL) {
++            goto ERROR;
++    }
++
++    switch (cunit_mode) {
++        case CUNIT_SCREEN:
++            CU_basic_set_mode(CU_BRM_VERBOSE);
++            CU_basic_run_tests();
++            break;
++        case CUNIT_XMLFILE:
++            CU_set_output_filename("etmemd_threadpool.c");
++            CU_automated_run_tests();
++            break;
++        case CUNIT_CONSOLE:
++            CU_console_run_tests();
++            break;
++        default:
++            printf("not support cunit mode, only support: "
++                   "0 for CUNIT_SCREEN, 1 for CUNIT_XMLFILE, 2 for CUNIT_CONSOLE\n");
++            goto ERROR;
++    }
++
++    num_failures = CU_get_number_of_failures();
++    CU_cleanup_registry();
++    return num_failures;
++
++ERROR:
++    error_num = CU_get_error();
++    CU_cleanup_registry();
++    return -error_num;
++}
+diff --git a/etmem/test/etmem_timer_ops_llt_test/CMakeLists.txt b/etmem/test/etmem_timer_ops_llt_test/CMakeLists.txt
+new file mode 100644
+index 0000000..76aa48e
+--- /dev/null
++++ b/etmem/test/etmem_timer_ops_llt_test/CMakeLists.txt
+@@ -0,0 +1,26 @@
++# /******************************************************************************
++#  * Copyright (c) Huawei Technologies Co., Ltd. 2019-2021. All rights reserved.
++#  * etmem is licensed under the Mulan PSL v2.
++#  * You can use this software according to the terms and conditions of the Mulan PSL v2.
++#  * You may obtain a copy of Mulan PSL v2 at:
++#  *     http://license.coscl.org.cn/MulanPSL2
++#  * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR
++#  * IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY OR FIT FOR A PARTICULAR
++#  * PURPOSE.
++#  * See the Mulan PSL v2 for more details.
++#  * Author: liubo
++#  * Create: 2021-11-30
++#  * Description: CMakefileList for etmem_timer_ops_llt_test
++#  ******************************************************************************/
++
++project(etmem)
++
++INCLUDE_DIRECTORIES(../../inc/etmem_inc)
++INCLUDE_DIRECTORIES(../../inc/etmemd_inc)
++INCLUDE_DIRECTORIES(${GLIB2_INCLUDE_DIRS})
++
++SET(EXE etmem_timer_ops_llt)
++
++add_executable(${EXE} etmem_timer_ops_llt.c)
++
++target_link_libraries(${EXE} cunit ${BUILD_DIR}/lib/libetmemd.so pthread dl rt libboundscheck numa ${GLIB2_LIBRARIES})
+diff --git a/etmem/test/etmem_timer_ops_llt_test/etmem_timer_ops_llt.c b/etmem/test/etmem_timer_ops_llt_test/etmem_timer_ops_llt.c
+new file mode 100644
+index 0000000..c97cdf9
+--- /dev/null
++++ b/etmem/test/etmem_timer_ops_llt_test/etmem_timer_ops_llt.c
+@@ -0,0 +1,183 @@
++/******************************************************************************
++ * Copyright (c) Huawei Technologies Co., Ltd. 2019-2021. All rights reserved.
++ * etmem is licensed under the Mulan PSL v2.
++ * You can use this software according to the terms and conditions of the Mulan PSL v2.
++ * You may obtain a copy of Mulan PSL v2 at:
++ * http://license.coscl.org.cn/MulanPSL2
++ * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR
++ * IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY OR FIT FOR A PARTICULAR
++ * PURPOSE.
++ * See the Mulan PSL v2 for more details.
++ * Author: liubo
++ * Create: 2020-08-13
++ * Description: test for etmem timer operations
++ ******************************************************************************/
++#include <sys/file.h>
++#include <sys/sysinfo.h>
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++#include <stdbool.h>
++#include <unistd.h>
++
++#include <CUnit/Basic.h>
++#include <CUnit/Automated.h>
++#include <CUnit/Console.h>
++
++#include "etmemd_threadtimer.h"
++
++static int g_timer_exec_time = 0;
++
++typedef void *(*timer_exector)(void *);
++
++static void get_timer_expired_time(int time, int exp)
++{
++    timer_thread *timer = NULL;
++
++    timer = thread_timer_create(time);
++    CU_ASSERT_PTR_NOT_NULL(timer);
++
++    CU_ASSERT_EQUAL(timer->expired_time, exp);
++    thread_timer_destroy(&timer);
++}
++
++static void test_timer_create_delete(void)
++{
++    timer_thread *timer = NULL;
++    thread_timer_destroy(&timer);
++
++    get_timer_expired_time(1, 1);
++    get_timer_expired_time(2, 2);
++    get_timer_expired_time(50, 50);
++    get_timer_expired_time(1199, 1199);
++    get_timer_expired_time(1201, 1201);
++}
++
++static void *threadtimer_exector(void *str)
++{
++    char *temp_str = str;
++    printf("threadtimer_exector: %s\n", temp_str);
++    g_timer_exec_time++;
++    return NULL;
++}
++
++static void test_timer_start_error(void)
++{
++    char *timer_args = "for timer start test.\n";
++    timer_exector exector = threadtimer_exector;
++    timer_thread *timer = NULL;
++
++    timer = thread_timer_create(60);
++    CU_ASSERT_PTR_NOT_NULL(timer);
++
++    CU_ASSERT_EQUAL(thread_timer_start(NULL, NULL, NULL), -1);
++    CU_ASSERT_EQUAL(thread_timer_start(timer, NULL, NULL), -1);
++    CU_ASSERT_EQUAL(thread_timer_start(timer, exector, NULL), -1);
++    CU_ASSERT_EQUAL(thread_timer_start(timer, NULL, timer_args), -1);
++    CU_ASSERT_EQUAL(thread_timer_start(timer, exector, timer_args), 0);
++    CU_ASSERT_FALSE(timer->down);
++    CU_ASSERT_EQUAL(thread_timer_start(timer, exector, timer_args), 0);
++
++    thread_timer_destroy(&timer);
++    thread_timer_stop(timer);
++}
++
++static void test_timer_start_ok(void)
++{
++    char *timer_args = "for timer start test.\n";
++    timer_exector exector = threadtimer_exector;
++    timer_thread *timer = NULL;
++
++    timer = thread_timer_create(1);
++    CU_ASSERT_PTR_NOT_NULL(timer);
++
++    CU_ASSERT_EQUAL(thread_timer_start(timer, exector, timer_args), 0);
++    CU_ASSERT_FALSE(timer->down);
++ 
++    sleep(2);
++    CU_ASSERT_NOT_EQUAL(g_timer_exec_time, 0);
++
++    thread_timer_stop(timer);
++    thread_timer_destroy(&timer);
++}
++
++static void test_timer_stop(void)
++{
++    char *timer_args = "for timer start test.\n";
++    timer_exector exector = threadtimer_exector;
++    timer_thread *timer = NULL;
++
++    thread_timer_stop(timer);
++
++    timer = thread_timer_create(60);
++    CU_ASSERT_PTR_NOT_NULL(timer);
++
++    CU_ASSERT_EQUAL(thread_timer_start(timer, exector, timer_args), 0);
++    CU_ASSERT_FALSE(timer->down);
++
++    thread_timer_stop(timer);
++    CU_ASSERT_TRUE(timer->down);
++    thread_timer_destroy(&timer);
++}
++
++typedef enum {
++    CUNIT_SCREEN = 0,
++    CUNIT_XMLFILE,
++    CUNIT_CONSOLE
++} cu_run_mode;
++
++int main(int argc, const char **argv)
++{
++    CU_pSuite suite;
++    CU_pTest pTest;
++    unsigned int num_failures;
++    cu_run_mode cunit_mode = CUNIT_SCREEN;
++    int error_num;
++
++    if (argc > 1) {
++        cunit_mode = atoi(argv[1]);
++    }
++
++    if (CU_initialize_registry() != CUE_SUCCESS) {
++        return CU_get_error();
++    }
++
++    suite = CU_add_suite("etmem_timer_ops", NULL, NULL);
++    if (suite == NULL) {
++        goto ERROR;
++    }
++
++    if (CU_ADD_TEST(suite, test_timer_create_delete) == NULL ||
++        CU_ADD_TEST(suite, test_timer_start_error) == NULL ||
++        CU_ADD_TEST(suite, test_timer_start_ok) == NULL ||
++        CU_ADD_TEST(suite, test_timer_stop) == NULL) {
++            goto ERROR;
++    }
++
++    switch (cunit_mode) {
++        case CUNIT_SCREEN:
++            CU_basic_set_mode(CU_BRM_VERBOSE);
++            CU_basic_run_tests();
++            break;
++        case CUNIT_XMLFILE:
++            CU_set_output_filename("etmemd_threadtimer.c");
++            CU_automated_run_tests();
++            break;
++        case CUNIT_CONSOLE:
++            CU_console_run_tests();
++            break;
++        default:
++            printf("not support cunit mode, only support: "
++                   "0 for CUNIT_SCREEN, 1 for CUNIT_XMLFILE, 2 for CUNIT_CONSOLE\n");
++            goto ERROR;
++    }
++
++    num_failures = CU_get_number_of_failures();
++    CU_cleanup_registry();
++    return num_failures;
++
++ERROR:
++    error_num = CU_get_error();
++    CU_cleanup_registry();
++    return -error_num;
++}
+-- 
+1.8.3.1
+
