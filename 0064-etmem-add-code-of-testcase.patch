@@ -1,0 +1,1202 @@
+From 51adb91840286ce1720a43ac7d756fa7d4e6234e Mon Sep 17 00:00:00 2001
+From: liubo <liubo254@huawei.com>
+Date: Mon, 24 Jan 2022 01:34:44 +0800
+Subject: [PATCH 14/33] etmem: add code of testcase
+
+add code of testcase for etmem slide engine functions
+and add conf file for test use.
+
+Signed-off-by: liubo <liubo254@huawei.com>
+---
+ etmem/test/conf/conf_cslide/eng.config             |   7 +
+ etmem/test/conf/conf_cslide/proj.config            |   5 +
+ etmem/test/conf/conf_cslide/task.config            |   9 +
+ etmem/test/conf/conf_slide/config_file             |  18 +
+ etmem/test/etmem_slide_ops_llt_test/CMakeLists.txt |  29 +
+ .../etmem_slide_ops_llt_test/etmem_slide_ops_llt.c | 648 +++++++++++++++++++++
+ etmem/test/etmem_slide_ops_llt_test/mem_swaptest.c |  95 +++
+ .../etmem_slide_ops_llt_test/test_slide_ops.sh     | 309 ++++++++++
+ 8 files changed, 1120 insertions(+)
+ create mode 100644 etmem/test/conf/conf_cslide/eng.config
+ create mode 100644 etmem/test/conf/conf_cslide/proj.config
+ create mode 100644 etmem/test/conf/conf_cslide/task.config
+ create mode 100644 etmem/test/conf/conf_slide/config_file
+ create mode 100644 etmem/test/etmem_slide_ops_llt_test/CMakeLists.txt
+ create mode 100644 etmem/test/etmem_slide_ops_llt_test/etmem_slide_ops_llt.c
+ create mode 100644 etmem/test/etmem_slide_ops_llt_test/mem_swaptest.c
+ create mode 100644 etmem/test/etmem_slide_ops_llt_test/test_slide_ops.sh
+
+diff --git a/etmem/test/conf/conf_cslide/eng.config b/etmem/test/conf/conf_cslide/eng.config
+new file mode 100644
+index 0000000..4d0665b
+--- /dev/null
++++ b/etmem/test/conf/conf_cslide/eng.config
+@@ -0,0 +1,7 @@
++[engine]
++name=cslide
++project=test
++node_pair=2,0;3,1
++hot_threshold=1
++node_mig_quota=256
++node_hot_reserve=119600
+\ No newline at end of file
+diff --git a/etmem/test/conf/conf_cslide/proj.config b/etmem/test/conf/conf_cslide/proj.config
+new file mode 100644
+index 0000000..1174df3
+--- /dev/null
++++ b/etmem/test/conf/conf_cslide/proj.config
+@@ -0,0 +1,5 @@
++[project]
++name=test
++loop=3
++interval=1
++sleep=1
+\ No newline at end of file
+diff --git a/etmem/test/conf/conf_cslide/task.config b/etmem/test/conf/conf_cslide/task.config
+new file mode 100644
+index 0000000..336be39
+--- /dev/null
++++ b/etmem/test/conf/conf_cslide/task.config
+@@ -0,0 +1,9 @@
++[task]
++project=test
++engine=cslide
++name=background1
++type=pid
++value=1
++vm_flags=ht
++anon_only=no
++ign_host=yes
+\ No newline at end of file
+diff --git a/etmem/test/conf/conf_slide/config_file b/etmem/test/conf/conf_slide/config_file
+new file mode 100644
+index 0000000..5d9f965
+--- /dev/null
++++ b/etmem/test/conf/conf_slide/config_file
+@@ -0,0 +1,18 @@
++[project]
++name=test
++loop=1
++interval=1
++sleep=1
++
++[engine]
++name=slide
++project=test
++
++[task]
++project=test
++engine=slide
++name=background1
++type=name
++value=sshd
++max_threads=10
++T=2
+diff --git a/etmem/test/etmem_slide_ops_llt_test/CMakeLists.txt b/etmem/test/etmem_slide_ops_llt_test/CMakeLists.txt
+new file mode 100644
+index 0000000..2162d9e
+--- /dev/null
++++ b/etmem/test/etmem_slide_ops_llt_test/CMakeLists.txt
+@@ -0,0 +1,29 @@
++# /******************************************************************************
++#  * Copyright (c) Huawei Technologies Co., Ltd. 2019-2021. All rights reserved.
++#  * etmem is licensed under the Mulan PSL v2.
++#  * You can use this software according to the terms and conditions of the Mulan PSL v2.
++#  * You may obtain a copy of Mulan PSL v2 at:
++#  *     http://license.coscl.org.cn/MulanPSL2
++#  * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR
++#  * IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY OR FIT FOR A PARTICULAR
++#  * PURPOSE.
++#  * See the Mulan PSL v2 for more details.
++#  * Author: liubo
++#  * Create: 2021-11-29
++#  * Description: CMakefileList for etmem_slide_ops_llt to compile
++#  ******************************************************************************/
++
++project(etmem)
++
++INCLUDE_DIRECTORIES(../../inc/etmem_inc)
++INCLUDE_DIRECTORIES(../../inc/etmemd_inc)
++INCLUDE_DIRECTORIES(../common)
++INCLUDE_DIRECTORIES(../../src/etmemd_src)
++INCLUDE_DIRECTORIES(${GLIB2_INCLUDE_DIRS})
++
++SET(EXE etmem_slide_ops_llt)
++
++add_executable(${EXE} etmem_slide_ops_llt.c)
++
++target_link_libraries(${EXE} cunit ${BUILD_DIR}/lib/libetmemd.so ${BUILD_DIR}/lib/libtest.so pthread dl rt boundscheck numa ${GLIB2_LIBRARIES})
++target_link_libraries(mem_swaptest pthread dl rt boundscheck)
+diff --git a/etmem/test/etmem_slide_ops_llt_test/etmem_slide_ops_llt.c b/etmem/test/etmem_slide_ops_llt_test/etmem_slide_ops_llt.c
+new file mode 100644
+index 0000000..3a04a86
+--- /dev/null
++++ b/etmem/test/etmem_slide_ops_llt_test/etmem_slide_ops_llt.c
+@@ -0,0 +1,648 @@
++/******************************************************************************
++ * Copyright (c) Huawei Technologies Co., Ltd. 2019-2021. All rights reserved.
++ * etmem is licensed under the Mulan PSL v2.
++ * You can use this software according to the terms and conditions of the Mulan PSL v2.
++ * You may obtain a copy of Mulan PSL v2 at:
++ * http://license.coscl.org.cn/MulanPSL2
++ * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR
++ * IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY OR FIT FOR A PARTICULAR
++ * PURPOSE.
++ * See the Mulan PSL v2 for more details.
++ * Author: liubo
++ * Create: 2021-11-29
++ * Description: This is a source file of the unit test for project-related commands in etmem.
++ ******************************************************************************/
++
++#include <sys/file.h>
++#include <sys/prctl.h>
++#include <stdlib.h>
++#include <string.h>
++#include <unistd.h>
++#include <stdio.h>
++#include <glib.h>
++
++#include <CUnit/Basic.h>
++#include <CUnit/Automated.h>
++#include <CUnit/Console.h>
++
++#include "etmemd_project.h"
++#include "etmemd_task.h"
++#include "etmemd_engine.h"
++#include "etmemd_slide.h"
++#include "etmemd_cslide.h"
++#include "etmemd_rpc.h"
++#include "securec.h"
++
++#include "test_common.h"
++
++#include "etmemd_slide.c"
++
++#define PID_STR_MAX_LEN         10
++#define PID_TEST_NUM            100
++#define PID_PROCESS_MEM         5000
++#define PID_PROCESS_SLEEP_TIME  60
++#define WATER_LINT_TEMP         3
++#define RAND_STR_ARRAY_LEN      62
++
++static void test_engine_name_invalid(void)
++{
++    struct eng_test_param slide_param;
++    GKeyFile *config = NULL;
++
++    init_slide_eng(&slide_param);
++
++    slide_param.name = "engine no exist";
++    config = construct_eng_config(&slide_param);
++    CU_ASSERT_NOT_EQUAL(etmemd_project_add_engine(config), OPT_SUCCESS);
++    destroy_eng_config(config);
++
++    slide_param.name = "";
++    config = construct_eng_config(&slide_param);
++    CU_ASSERT_NOT_EQUAL(etmemd_project_add_engine(config), OPT_SUCCESS);
++    destroy_eng_config(config);
++
++    slide_param.name = NULL;
++    config = construct_eng_config(&slide_param);
++    CU_ASSERT_NOT_EQUAL(etmemd_project_add_engine(config), OPT_SUCCESS);
++    destroy_eng_config(config);
++}
++
++static void test_engine_proj_invalid(void)
++{
++    struct eng_test_param slide_param;
++    GKeyFile *config = NULL;
++
++    init_slide_eng(&slide_param);
++
++    slide_param.proj = "proj no exist";
++    config = construct_eng_config(&slide_param);
++    CU_ASSERT_EQUAL(etmemd_project_add_engine(config), OPT_PRO_NOEXIST);
++    destroy_eng_config(config);
++
++    slide_param.proj = "";
++    config = construct_eng_config(&slide_param);
++    CU_ASSERT_NOT_EQUAL(etmemd_project_add_engine(config), OPT_SUCCESS);
++    destroy_eng_config(config);
++
++    slide_param.proj = NULL;
++    config = construct_eng_config(&slide_param);
++    CU_ASSERT_NOT_EQUAL(etmemd_project_add_engine(config), OPT_SUCCESS);
++    destroy_eng_config(config);
++}
++
++void test_etmem_slide_engine_002(void)
++{
++    struct proj_test_param proj_param;
++    struct eng_test_param slide_eng;
++    struct cslide_eng_test_param cslide_eng;
++    GKeyFile *config = NULL;
++
++    init_proj_param(&proj_param);
++    do_add_proj_test(&proj_param);
++
++    init_cslide_eng(&cslide_eng);
++    config = construct_cslide_eng_config(&cslide_eng);
++    CU_ASSERT_EQUAL(etmemd_project_add_engine(config), OPT_SUCCESS);
++    destroy_cslide_eng_config(config);
++
++    /* repeat add and remove engine */
++    init_slide_eng(&slide_eng);
++    config = construct_eng_config(&slide_eng);
++    CU_ASSERT_EQUAL(etmemd_project_add_engine(config), OPT_SUCCESS);
++    CU_ASSERT_EQUAL(etmemd_project_add_engine(config), OPT_ENG_EXISTED);
++    CU_ASSERT_EQUAL(etmemd_project_remove_engine(config), OPT_SUCCESS);
++    CU_ASSERT_EQUAL(etmemd_project_remove_engine(config), OPT_ENG_NOEXIST);
++    destroy_eng_config(config);
++
++    test_engine_name_invalid();
++    test_engine_proj_invalid();
++
++    init_cslide_eng(&cslide_eng);
++    config = construct_cslide_eng_config(&cslide_eng);
++    CU_ASSERT_EQUAL(etmemd_project_remove_engine(config), OPT_SUCCESS);
++    destroy_cslide_eng_config(config);
++
++    do_rm_proj_test(&proj_param);
++}
++
++void test_etmem_slide_engine_001(void)
++{
++    struct proj_test_param proj_param;
++    struct eng_test_param slide_eng;
++    struct slide_task_test_param slide_task;
++    GKeyFile *eng_config = NULL;
++    GKeyFile *task_config = NULL;
++
++    init_proj_param(&proj_param);
++    do_add_proj_test(&proj_param);
++
++    init_slide_eng(&slide_eng);
++    eng_config = construct_eng_config(&slide_eng);
++    CU_ASSERT_EQUAL(etmemd_project_add_engine(eng_config), OPT_SUCCESS);
++
++    init_slide_task(&slide_task);
++    task_config = construct_slide_task_config(&slide_task);
++    CU_ASSERT_EQUAL(etmemd_project_add_task(task_config), OPT_SUCCESS);
++    destroy_slide_task_config(task_config);
++
++    CU_ASSERT_EQUAL(etmemd_project_remove_engine(eng_config), OPT_SUCCESS);
++    destroy_eng_config(eng_config);
++
++    do_rm_proj_test(&proj_param);
++}
++
++static void task_test_init(void)
++{
++    struct proj_test_param proj_param;
++    struct eng_test_param eng_param;
++    struct cslide_eng_test_param cslide_eng;
++    GKeyFile *config = NULL;
++
++    init_proj_param(&proj_param);
++    do_add_proj_test(&proj_param);
++
++    init_cslide_eng(&cslide_eng);
++    config = construct_cslide_eng_config(&cslide_eng);
++    CU_ASSERT_EQUAL(etmemd_project_add_engine(config), OPT_SUCCESS);
++    destroy_cslide_eng_config(config);
++
++    init_slide_eng(&eng_param);
++    config = construct_eng_config(&eng_param);
++    CU_ASSERT_EQUAL(etmemd_project_add_engine(config), OPT_SUCCESS);
++    destroy_eng_config(config);
++}
++
++static void task_test_fini(void)
++{
++    struct proj_test_param proj_param;
++    struct eng_test_param eng_param;
++    struct cslide_eng_test_param cslide_eng;
++    GKeyFile *config = NULL;
++
++    init_cslide_eng(&cslide_eng);
++    config = construct_cslide_eng_config(&cslide_eng);
++    CU_ASSERT_EQUAL(etmemd_project_remove_engine(config), OPT_SUCCESS);
++    destroy_cslide_eng_config(config);
++
++    init_slide_eng(&eng_param);
++    config = construct_eng_config(&eng_param);
++    CU_ASSERT_EQUAL(etmemd_project_remove_engine(config), OPT_SUCCESS);
++    destroy_eng_config(config);
++
++    init_proj_param(&proj_param);
++    do_rm_proj_test(&proj_param);
++}
++
++static void test_etmem_slide_task_001(void)
++{
++    struct slide_task_test_param slide_task;
++    GKeyFile *config = NULL;
++
++    task_test_init();
++
++    init_slide_task(&slide_task);
++    slide_task.task_param.name = "task1";
++    config = construct_slide_task_config(&slide_task);
++    CU_ASSERT_EQUAL(etmemd_project_add_task(config), OPT_SUCCESS);
++    destroy_slide_task_config(config);
++
++    init_slide_task(&slide_task);
++    slide_task.task_param.name = "task2";
++    config = construct_slide_task_config(&slide_task);
++    CU_ASSERT_EQUAL(etmemd_project_add_task(config), OPT_SUCCESS);
++    destroy_slide_task_config(config);
++
++    CU_ASSERT_EQUAL(etmemd_migrate_start(DEFAULT_PROJ), OPT_SUCCESS);
++    init_slide_task(&slide_task);
++    slide_task.task_param.name = "task1";
++    config = construct_slide_task_config(&slide_task);
++    CU_ASSERT_EQUAL(etmemd_project_remove_task(config), OPT_SUCCESS);
++    destroy_slide_task_config(config);
++
++    CU_ASSERT_EQUAL(etmemd_migrate_stop(DEFAULT_PROJ), OPT_SUCCESS);
++    init_slide_task(&slide_task);
++    slide_task.task_param.name = "task2";
++    config = construct_slide_task_config(&slide_task);
++    CU_ASSERT_EQUAL(etmemd_project_remove_task(config), OPT_SUCCESS);
++    destroy_slide_task_config(config);
++
++    task_test_fini();
++}
++
++static void test_etmem_task_swap_flag_error(void)
++{
++    struct slide_task_test_param slide_task;
++    GKeyFile *config = NULL;
++
++    task_test_init();
++
++    /* empty value of swap_flag */
++    init_slide_task(&slide_task);
++    slide_task.swap_flag = "";
++    config = construct_slide_task_config(&slide_task);
++    CU_ASSERT_NOT_EQUAL(etmemd_project_add_task(config), OPT_SUCCESS);
++    destroy_slide_task_config(config);
++
++    /* wrong value of swap_flag */
++    init_slide_task(&slide_task);
++    slide_task.swap_flag = "wrong";
++    config = construct_slide_task_config(&slide_task);
++    CU_ASSERT_NOT_EQUAL(etmemd_project_add_task(config), OPT_SUCCESS);
++    destroy_slide_task_config(config);
++
++    /* wrong value of swap_flag */
++    init_slide_task(&slide_task);
++    slide_task.swap_flag = "YES";
++    config = construct_slide_task_config(&slide_task);
++    CU_ASSERT_NOT_EQUAL(etmemd_project_add_task(config), OPT_SUCCESS);
++    destroy_slide_task_config(config);
++
++    /* wrong value of swap_flag */
++    init_slide_task(&slide_task);
++    slide_task.swap_flag = "NO";
++    config = construct_slide_task_config(&slide_task);
++    CU_ASSERT_NOT_EQUAL(etmemd_project_add_task(config), OPT_SUCCESS);
++    destroy_slide_task_config(config);
++
++    /* wrong value of pid which is equal to 0 */
++    init_slide_task(&slide_task);
++    slide_task.task_param.value = "0";
++    config = construct_slide_task_config(&slide_task);
++    CU_ASSERT_EQUAL(etmemd_project_add_task(config), OPT_SUCCESS);
++    CU_ASSERT_EQUAL(etmemd_migrate_start(DEFAULT_PROJ), OPT_SUCCESS);
++    /* sleep 10 seconds to run etmemd project for coverage of slide_executor */
++    sleep(10);
++    CU_ASSERT_EQUAL(etmemd_project_remove_task(config), OPT_SUCCESS);
++    destroy_slide_task_config(config);
++
++    /* run slide_policy_interface fail */
++    CU_ASSERT_EQUAL(slide_policy_interface(NULL, NULL), NULL);
++
++    /* run slide_do_migrate fail */
++    CU_ASSERT_EQUAL(slide_do_migrate(1, NULL), -1);
++
++    task_test_fini();
++}
++
++static void test_etmem_task_swap_flag_ok(void)
++{
++    struct slide_task_test_param slide_task;
++    GKeyFile *config = NULL;
++
++    task_test_init();
++
++    /* empty value of swap_flag */
++    init_slide_task(&slide_task);
++    slide_task.task_param.name = "task1_swap_flag_yes";
++    slide_task.swap_flag = "yes";
++    config = construct_slide_task_config(&slide_task);
++    CU_ASSERT_EQUAL(etmemd_project_add_task(config), OPT_SUCCESS);
++    destroy_slide_task_config(config);
++
++    init_slide_task(&slide_task);
++    slide_task.task_param.name = "task1_swap_flag_no";
++    slide_task.swap_flag = "no";
++    config = construct_slide_task_config(&slide_task);
++    CU_ASSERT_EQUAL(etmemd_project_add_task(config), OPT_SUCCESS);
++    destroy_slide_task_config(config);
++
++    task_test_fini();
++}
++
++static void test_etmem_task_swap_threshold_error(void)
++{
++    struct slide_task_test_param slide_task;
++    GKeyFile *config = NULL;
++
++    task_test_init();
++
++    /* empty value of swap_threshold */
++    init_slide_task(&slide_task);
++    slide_task.swap_threshold = "";
++    config = construct_slide_task_config(&slide_task);
++    CU_ASSERT_NOT_EQUAL(etmemd_project_add_task(config), OPT_SUCCESS);
++    destroy_slide_task_config(config);
++
++    /* swap_threshold too long */
++    init_slide_task(&slide_task);
++    slide_task.swap_threshold = "12345678910234g";
++    config = construct_slide_task_config(&slide_task);
++    CU_ASSERT_NOT_EQUAL(etmemd_project_add_task(config), OPT_SUCCESS);
++    destroy_slide_task_config(config);
++
++    /* swap_threshold para is wrong*/
++    init_slide_task(&slide_task);
++    slide_task.swap_threshold = "12hhG";
++    config = construct_slide_task_config(&slide_task);
++    CU_ASSERT_NOT_EQUAL(etmemd_project_add_task(config), OPT_SUCCESS);
++    destroy_slide_task_config(config);
++
++    /* swap_threshold para is wrong*/
++    init_slide_task(&slide_task);
++    slide_task.swap_threshold = "1234";
++    config = construct_slide_task_config(&slide_task);
++    CU_ASSERT_NOT_EQUAL(etmemd_project_add_task(config), OPT_SUCCESS);
++    destroy_slide_task_config(config);
++
++    /* wrong value of pid which is equal to 0 */
++    init_slide_task(&slide_task);
++    slide_task.task_param.value = "0";
++    config = construct_slide_task_config(&slide_task);
++    CU_ASSERT_EQUAL(etmemd_project_add_task(config), OPT_SUCCESS);
++    CU_ASSERT_EQUAL(etmemd_migrate_start(DEFAULT_PROJ), OPT_SUCCESS);
++    /* sleep 10 seconds to run etmemd project for coverage of slide_executor */
++    sleep(10);
++    CU_ASSERT_EQUAL(etmemd_project_remove_task(config), OPT_SUCCESS);
++    destroy_slide_task_config(config);
++
++    /* run slide_policy_interface fail */
++    CU_ASSERT_EQUAL(slide_policy_interface(NULL, NULL), NULL);
++
++    /* run slide_do_migrate fail */
++    CU_ASSERT_EQUAL(slide_do_migrate(1, NULL), -1);
++
++    task_test_fini();
++}
++
++static void test_etmem_task_swap_threshold_ok(void)
++{
++    struct slide_task_test_param slide_task;
++    GKeyFile *config = NULL;
++
++    task_test_init();
++
++    init_slide_task(&slide_task);
++    slide_task.task_param.name = "task1_swap_threshold_5G";
++    slide_task.swap_threshold = "5G";
++    config = construct_slide_task_config(&slide_task);
++    CU_ASSERT_EQUAL(etmemd_project_add_task(config), OPT_SUCCESS);
++    destroy_slide_task_config(config);
++
++    init_slide_task(&slide_task);
++    slide_task.task_param.name = "task1_swap_threshold_5g";
++    slide_task.swap_threshold = "5g";
++    config = construct_slide_task_config(&slide_task);
++    CU_ASSERT_EQUAL(etmemd_project_add_task(config), OPT_SUCCESS);
++    destroy_slide_task_config(config);
++
++    init_slide_task(&slide_task);
++    slide_task.task_param.name = "task2_swap_threshold";
++    slide_task.swap_threshold = "123456789g";
++    config = construct_slide_task_config(&slide_task);
++    CU_ASSERT_EQUAL(etmemd_project_add_task(config), OPT_SUCCESS);
++    destroy_slide_task_config(config);
++
++    init_slide_task(&slide_task);
++    slide_task.task_param.name = "task3_swap_threshold";
++    slide_task.swap_threshold = "999999999g";
++    config = construct_slide_task_config(&slide_task);
++    CU_ASSERT_EQUAL(etmemd_project_add_task(config), OPT_SUCCESS);
++    destroy_slide_task_config(config);
++
++    task_test_fini();
++}
++
++static void test_task_common_invalid_config(void)
++{
++    struct slide_task_test_param slide_task;
++    GKeyFile *config = NULL;
++    char *long_name = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
++
++    /* repeat add */
++    init_slide_task(&slide_task);
++    config = construct_slide_task_config(&slide_task);
++    CU_ASSERT_EQUAL(etmemd_project_add_task(config), OPT_SUCCESS);
++    CU_ASSERT_EQUAL(etmemd_project_add_task(config), OPT_TASK_EXISTED);
++    destroy_slide_task_config(config);
++
++    /* no exist remove */
++    slide_task.task_param.name = "task no exists";
++    config = construct_slide_task_config(&slide_task);
++    CU_ASSERT_EQUAL(etmemd_project_remove_task(config), OPT_TASK_NOEXIST);
++    destroy_slide_task_config(config);
++
++    /* repeat remove */
++    init_slide_task(&slide_task);
++    config = construct_slide_task_config(&slide_task);
++    CU_ASSERT_EQUAL(etmemd_project_remove_task(config), OPT_SUCCESS);
++    CU_ASSERT_EQUAL(etmemd_project_remove_task(config), OPT_TASK_NOEXIST);
++    destroy_slide_task_config(config);
++
++    /* no project exist */
++    init_slide_task(&slide_task);
++    slide_task.task_param.proj = "proj no exists";
++    config = construct_slide_task_config(&slide_task);
++    CU_ASSERT_EQUAL(etmemd_project_add_task(config), OPT_PRO_NOEXIST);
++    destroy_slide_task_config(config);
++
++    /* not project set */
++    slide_task.task_param.proj = NULL;
++    config = construct_slide_task_config(&slide_task);
++    CU_ASSERT_EQUAL(etmemd_project_add_task(config), OPT_INVAL);
++    destroy_slide_task_config(config);
++
++    /* long project name */
++    slide_task.task_param.proj = long_name;
++    config = construct_slide_task_config(&slide_task);
++    CU_ASSERT_EQUAL(etmemd_project_add_task(config), OPT_INVAL);
++    destroy_slide_task_config(config);
++
++    /* no engine exist */
++    init_slide_task(&slide_task);
++    slide_task.task_param.eng = "task no exists";
++    config = construct_slide_task_config(&slide_task);
++    CU_ASSERT_EQUAL(etmemd_project_add_task(config), OPT_ENG_NOEXIST);
++    destroy_slide_task_config(config);
++
++    /* no engine set */
++    slide_task.task_param.eng = NULL;
++    config = construct_slide_task_config(&slide_task);
++    CU_ASSERT_EQUAL(etmemd_project_add_task(config), OPT_INVAL);
++    destroy_slide_task_config(config);
++
++    /* long engine name */
++    slide_task.task_param.eng = long_name;
++    config = construct_slide_task_config(&slide_task);
++    CU_ASSERT_EQUAL(etmemd_project_add_task(config), OPT_INVAL);
++    destroy_slide_task_config(config);
++
++    /* no name set for task */
++    init_slide_task(&slide_task);
++    slide_task.task_param.name = NULL;
++    config = construct_slide_task_config(&slide_task);
++    CU_ASSERT_EQUAL(etmemd_project_add_task(config), OPT_INVAL);
++    destroy_slide_task_config(config);
++
++    /* task name too long */
++    slide_task.task_param.name = long_name;
++    config = construct_slide_task_config(&slide_task);
++    CU_ASSERT_EQUAL(etmemd_project_add_task(config), OPT_INVAL);
++    destroy_slide_task_config(config);
++
++    /* type invalid */
++    init_slide_task(&slide_task);
++    slide_task.task_param.type = "invalid";
++    config = construct_slide_task_config(&slide_task);
++    CU_ASSERT_NOT_EQUAL(etmemd_project_add_task(config), OPT_SUCCESS);
++    destroy_slide_task_config(config);
++}
++
++static void test_task_slide_invalid_config(void)
++{
++    struct slide_task_test_param slide_task;
++    GKeyFile *config = NULL;
++
++    init_slide_task(&slide_task);
++
++    /* enpty value of T */
++    slide_task.T = "";
++    config = construct_slide_task_config(&slide_task);
++    CU_ASSERT_NOT_EQUAL(etmemd_project_add_task(config), OPT_SUCCESS);
++    destroy_slide_task_config(config);
++
++    /* wrong value of T which is bigger than WEIGHT * loop times */
++    slide_task.T = "10";
++    config = construct_slide_task_config(&slide_task);
++    CU_ASSERT_NOT_EQUAL(etmemd_project_add_task(config), OPT_SUCCESS);
++    destroy_slide_task_config(config);
++
++    /* wrong value of T which is less than 0 */
++    slide_task.T = "-1";
++    config = construct_slide_task_config(&slide_task);
++    CU_ASSERT_NOT_EQUAL(etmemd_project_add_task(config), OPT_SUCCESS);
++    destroy_slide_task_config(config);
++
++    init_slide_task(&slide_task);
++    /* wrong value of max_threads which is equal to 0, slide will correct it
++     * to valid value
++     */
++    slide_task.max_threads = "0";
++    config = construct_slide_task_config(&slide_task);
++    CU_ASSERT_EQUAL(etmemd_project_add_task(config), OPT_SUCCESS);
++    CU_ASSERT_EQUAL(etmemd_migrate_start(DEFAULT_PROJ), OPT_SUCCESS);
++    CU_ASSERT_EQUAL(etmemd_project_remove_task(config), OPT_SUCCESS);
++    CU_ASSERT_EQUAL(etmemd_migrate_stop(DEFAULT_PROJ), OPT_SUCCESS);
++    destroy_slide_task_config(config);
++
++    /* wrong value of max_threads which is equal to -1, slide will correct it
++     * to valid value
++     */
++    slide_task.max_threads = "-1";
++    config = construct_slide_task_config(&slide_task);
++    CU_ASSERT_EQUAL(etmemd_project_add_task(config), OPT_SUCCESS);
++    CU_ASSERT_EQUAL(etmemd_migrate_start(DEFAULT_PROJ), OPT_SUCCESS);
++    CU_ASSERT_EQUAL(etmemd_project_remove_task(config), OPT_SUCCESS);
++    CU_ASSERT_EQUAL(etmemd_migrate_stop(DEFAULT_PROJ), OPT_SUCCESS);
++    destroy_slide_task_config(config);
++
++    /* wrong value of max_threads which is too big, slide will correct it
++     * to valid value
++     */
++    slide_task.max_threads = "10000";
++    config = construct_slide_task_config(&slide_task);
++    CU_ASSERT_EQUAL(etmemd_project_add_task(config), OPT_SUCCESS);
++    CU_ASSERT_EQUAL(etmemd_migrate_start(DEFAULT_PROJ), OPT_SUCCESS);
++    CU_ASSERT_EQUAL(etmemd_project_remove_task(config), OPT_SUCCESS);
++    CU_ASSERT_EQUAL(etmemd_migrate_stop(DEFAULT_PROJ), OPT_SUCCESS);
++    destroy_slide_task_config(config);
++
++    init_slide_task(&slide_task);
++    /* wrong value of pid which is equal to 0 */
++    slide_task.task_param.value = "0";
++    config = construct_slide_task_config(&slide_task);
++    CU_ASSERT_EQUAL(etmemd_project_add_task(config), OPT_SUCCESS);
++    CU_ASSERT_EQUAL(etmemd_migrate_start(DEFAULT_PROJ), OPT_SUCCESS);
++    /* sleep 10 seconds to run etmemd project for coverage of slide_executor */
++    sleep(10);
++    CU_ASSERT_EQUAL(etmemd_project_remove_task(config), OPT_SUCCESS);
++    destroy_slide_task_config(config);
++
++    /* run slide_policy_interface fail */
++    CU_ASSERT_EQUAL(slide_policy_interface(NULL, NULL), NULL);
++
++    /* run slide_do_migrate fail */
++    CU_ASSERT_EQUAL(slide_do_migrate(1, NULL), -1);
++}
++
++void test_etmem_slide_task_002(void)
++{
++    task_test_init();
++
++    test_task_common_invalid_config();
++    test_task_slide_invalid_config();
++
++    task_test_fini();
++}
++
++typedef enum {
++    CUNIT_SCREEN = 0,
++    CUNIT_XMLFILE,
++    CUNIT_CONSOLE
++} cu_run_mode;
++
++static void test_slide(void)
++{
++    CU_ASSERT_EQUAL(system("../etmem_slide_ops_llt_test/test_slide_ops.sh"), 0);
++}
++
++int main(int argc, const char **argv)
++{
++    CU_pSuite suite;
++    CU_pTest pTest;
++    unsigned int num_failures;
++    cu_run_mode cunit_mode = CUNIT_SCREEN;
++    int error_num;
++
++    if (argc > 1) {
++        cunit_mode = atoi(argv[1]);
++    }
++
++    if (CU_initialize_registry() != CUE_SUCCESS) {
++        return -CU_get_error();
++    }
++
++    suite = CU_add_suite("etmem_slide_ops", NULL, NULL);
++    if (suite == NULL) {
++        goto ERROR;
++    }
++
++    if (CU_ADD_TEST(suite, test_etmem_slide_task_002) == NULL ||
++        CU_ADD_TEST(suite, test_etmem_slide_task_001) == NULL ||
++        CU_ADD_TEST(suite, test_etmem_slide_engine_002) == NULL ||
++        CU_ADD_TEST(suite, test_etmem_slide_engine_001) == NULL ||
++        CU_ADD_TEST(suite, test_etmem_task_swap_flag_error) == NULL ||
++        CU_ADD_TEST(suite, test_etmem_task_swap_flag_ok) == NULL ||
++        CU_ADD_TEST(suite, test_etmem_task_swap_threshold_error) == NULL ||
++        CU_ADD_TEST(suite, test_etmem_task_swap_threshold_ok) == NULL ||
++        CU_ADD_TEST(suite, test_slide) == NULL) {
++            printf("CU_ADD_TEST fail. \n");
++            goto ERROR;
++    }
++
++    switch (cunit_mode) {
++        case CUNIT_SCREEN:
++            CU_basic_set_mode(CU_BRM_VERBOSE);
++            CU_basic_run_tests();
++            break;
++        case CUNIT_XMLFILE:
++            CU_set_output_filename("etmemd_slide.c");
++            CU_automated_run_tests();
++            break;
++        case CUNIT_CONSOLE:
++            CU_console_run_tests();
++            break;
++        default:
++            printf("not support cunit mode, only support: "
++                   "0 for CUNIT_SCREEN, 1 for CUNIT_XMLFILE, 2 for CUNIT_CONSOLE\n");
++            goto ERROR;
++    }
++
++    num_failures = CU_get_number_of_failures();
++    CU_cleanup_registry();
++    return num_failures;
++
++ERROR:
++    error_num = CU_get_error();
++    CU_cleanup_registry();
++    return -error_num;
++}
+diff --git a/etmem/test/etmem_slide_ops_llt_test/mem_swaptest.c b/etmem/test/etmem_slide_ops_llt_test/mem_swaptest.c
+new file mode 100644
+index 0000000..ab26f8e
+--- /dev/null
++++ b/etmem/test/etmem_slide_ops_llt_test/mem_swaptest.c
+@@ -0,0 +1,95 @@
++/******************************************************************************
++ * Copyright (c) Huawei Technologies Co., Ltd. 2019-2021. All rights reserved.
++ * etmem is licensed under the Mulan PSL v2.
++ * You can use this software according to the terms and conditions of the Mulan PSL v2.
++ * You may obtain a copy of Mulan PSL v2 at:
++ * http://license.coscl.org.cn/MulanPSL2
++ * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR
++ * IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY OR FIT FOR A PARTICULAR
++ * PURPOSE.
++ * See the Mulan PSL v2 for more details.
++ * Author: liubo
++ * Create: 2021-11-29
++ * Description: construct a progress test for etmemd slide engine
++ ******************************************************************************/
++#include <stdio.h>
++#include <stdlib.h>
++#include <sys/mman.h>
++#include <unistd.h>
++#include <sys/types.h>
++#include <sys/stat.h>
++#include <string.h>
++#include <memory.h>
++
++#include "securec.h"
++
++#define VMA_FLAG    203
++#define SLEEP_TIME  2
++
++int main(int argc, char *argv[])
++{
++    char *memory_with_flag = NULL;
++    char *memory_no_flag = NULL;
++    char i = 0;
++    int ret = -1;
++    /* get memory size: 1GB for test */
++    size_t memory_len = (1UL * 1024) * 1024 * 1024;
++
++    memory_with_flag = (char *)mmap(NULL, memory_len, PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
++    if (memory_with_flag == MAP_FAILED) {
++        perror("map mem");
++        memory_with_flag = NULL;
++        return -1;
++    }
++
++    ret = madvise(memory_with_flag, memory_len, VMA_FLAG);
++    if (ret != 0) {
++        printf("madvise error.\n");
++        goto free_memory_with_flag;
++    }
++
++    ret = memset_s(memory_with_flag, memory_len, '0', memory_len);
++    if (ret != EOK) {
++        printf("memset for memory_with flag fail, ret: %d err(%s)\n", ret, strerror(errno));
++        goto free_memory_with_flag;
++    }
++
++    memory_no_flag = (char *)mmap(NULL, memory_len, PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
++    if (memory_no_flag == MAP_FAILED) {
++        perror("map mem");
++        goto free_memory_with_flag;
++    }
++
++    ret = memset_s(memory_no_flag, memory_len, '0', memory_len);
++    if (ret != EOK) {
++        printf("memset for memory_no_flag flag fail, ret: %d err(%s)\n", ret, strerror(errno));
++        goto free_all_memory;
++    }
++
++    while (1) {
++        ret = memset_s(memory_no_flag, memory_len, i, memory_len);
++        if (ret != EOK) {
++            printf("memset for memory_no_flag flag fail\n");
++            goto free_all_memory;
++        }
++
++        sleep(SLEEP_TIME);
++        i++;
++    }
++
++free_all_memory:
++    ret = munmap(memory_no_flag, memory_len);
++    if (ret != 0) {
++        printf("release memory for memory_no_flag failed.\n");
++        return -1;
++    }
++
++free_memory_with_flag:
++    ret = munmap(memory_with_flag, memory_len);
++    if (ret != 0) {
++        printf("release memory for memory_with_flag failed.\n");
++        return -1;
++    }
++
++    return 0;
++}
+diff --git a/etmem/test/etmem_slide_ops_llt_test/test_slide_ops.sh b/etmem/test/etmem_slide_ops_llt_test/test_slide_ops.sh
+new file mode 100644
+index 0000000..f763726
+--- /dev/null
++++ b/etmem/test/etmem_slide_ops_llt_test/test_slide_ops.sh
+@@ -0,0 +1,309 @@
++#!/bin/bash
++#
++#Level: 0
++#Type: auto
++#Description: start 多个不同的project
++
++set +e
++
++config_file="../conf/conf_slide/config_file"
++config_file_bak="../conf/conf_slide/config_file_bak"
++Etmem_slide_test="slide_test"
++project_configfile=`pwd`/"slide_project_swap_test.yaml"
++task_configfile=`pwd`/"slide_task_test.yaml"
++
++function rand_file_Str
++{
++    j=0;
++    for i in {a..z};do array[$j]=$i;j=$(($j+1));done
++    for i in {A..Z};do array[$j]=$i;j=$(($j+1));done
++    for ((i=0;i<257;i++));do filestrs="$filestrs${array[$(($RANDOM%$j))]}";done
++}
++
++function rand_pro_Str
++{
++    j=0;
++    for i in {a..z};do array[$j]=$i;j=$(($j+1));done
++    for i in {A..Z};do array[$j]=$i;j=$(($j+1));done
++    for ((i=0;i<33;i++));do prostrs="$prostrs${array[$(($RANDOM%$j))]}";done  
++}
++
++function rand_sock_Str
++{
++    j=0;
++    for i in {a..z};do array[$j]=$i;j=$(($j+1));done
++    for i in {A..Z};do array[$j]=$i;j=$(($j+1));done
++    for ((i=0;i<108;i++));do sockstrs="$sockstrs${array[$(($RANDOM%$j))]}";done  
++}
++
++function add_project()
++{
++    touch $project_configfile
++
++    echo "[project]" >> $project_configfile
++    echo "name=$Etmem_slide_test" >> $project_configfile
++    echo "loop=1" >> $project_configfile
++    echo "interval=1" >> $project_configfile
++    echo "sleep=1" >> $project_configfile
++
++    echo "sysmem_threshold=100" >> $project_configfile
++    echo "swapcache_high_wmark=3" >> $project_configfile
++    echo "swapcache_low_wmark=1" >> $project_configfile
++
++    echo "" >> $project_configfile
++    echo "#slide" >> $project_configfile
++    echo "[engine]" >> $project_configfile
++    echo "name=slide" >> $project_configfile
++    echo "project=$Etmem_slide_test" >> $project_configfile
++
++    ./bin/etmem obj add -f ${project_configfile} -s sock_slide_name
++
++    for i in $*
++    do
++        rm -f $task_configfile
++        touch $task_configfile
++        echo "[task]" >> $task_configfile
++        echo "project=$Etmem_slide_test" >> $task_configfile
++        echo "engine=slide" >> $task_configfile
++        echo "name=swap_test_$i" >> $task_configfile
++        echo "type=name" >> $task_configfile
++        echo "value = $i" >> $task_configfile
++        echo "max_threads=1" >> $task_configfile
++        echo "T=3" >> $task_configfile
++        echo $i
++        if [ $i = 'mem_swaptest' ];then
++            echo "swap_threshold=1g" >> $task_configfile
++            echo "swap_flag=yes" >> $task_configfile
++        fi
++        ./bin/etmem obj add -f ${task_configfile} -s sock_slide_name
++    done
++}
++
++function start_project()
++{
++    ./bin/etmem project start -n ${Etmem_slide_test} -s sock_slide_name
++    ./bin/etmem project show -s sock_slide_name
++}
++
++function project_name_length_larger()
++{
++    sed -i "s/name=test/name=project_name_length_larger_than_32/g" ${config_file_bak}
++}
++
++function project_name_length_restore()
++{
++    sed -i "s/name=project_name_length_larger_than_32/name=test/g" ${config_file_bak}
++}
++
++cmd_test()
++{
++    ./bin/etmem
++    ./bin/etmem -h
++    ./bin/etmem help
++    ./bin/etmem project
++    ./bin/etmem obj
++    ./bin/etmem project -h
++    ./bin/etmem obj -h
++    ./bin/etmem project help
++    ./bin/etmem obj help
++    ./bin/etmem project other
++    ./bin/etmem obj other
++    ./bin/etmem obj add
++    ./bin/etmem obj add -o other
++    ./bin/etmem project start -o other
++    ./bin/etmem project start -n project_name_length_larger_than_32
++    project_name_length_larger
++    ./bin/etmem obj add -f ${config_file_bak} -s sock_slide_name
++    project_name_length_restore
++    ./bin/etmem obj add -s sock_cmd_name
++    ./bin/etmem obj add -f ${config_file}
++    ./bin/etmem obj add -f ${config_file} -s sock_cmd_name
++    ./bin/etmem obj add -f ${filestrs} -s sock_cmd_name
++    ./bin/etmem obj add -n ${prostrs} -s sock_cmd_name
++    ./bin/etmem obj add -f ${config_file} -s ${sockstrs}
++    ./bin/etmem obj add -f ${config_file} -s sock_cmd_name error
++    ./bin/etmem project start -n ${Etmem_slide_test} -s sock_cmd_name
++    ./bin/etmem project start -n ${Etmem_slide_test}
++    ./bin/etmem project start -s sock_cmd_name
++    ./bin/etmem engine
++    ./bin/etmem engine -h
++    ./bin/etmem engine --help
++    ./bin/etmem engine -s ""
++    ./bin/etmem engine -s sock_name
++    ./bin/etmem engine -s sock_name -n ""
++    ./bin/etmem engine -s sock_name -n proj_name
++    ./bin/etmem engine -s sock_name -n proj_name -e "" -t task_name
++    ./bin/etmem engine -s sock_name -n proj_name -e cslide -t ""
++    ./bin/etmem engine "" -s sock_name -n proj_name -e cslide -t task_name
++    ./bin/etmem engine showtaskpages -s sock_name
++    ./bin/etmem engine showtaskpages -s sock_name -n proj_name
++    ./bin/etmem engine showtaskpages -s sock_name -n proj_name -e
++    ./bin/etmem engine showtaskpages -s sock_name -n proj_name -e cslide
++    ./bin/etmem engine showtaskpages -s sock_name -n proj_name -e cslide -t task_name
++    ./bin/etmem engine showtaskpages -s sock_name -n proj_name -e slide -t task_name
++    ./bin/etmem engine showhostpages -s sock_name -n proj_name -e cslide -t task_name
++    ./bin/etmem engine showhostpages -s sock_name -n proj_name -e cslide -t ""
++    ./bin/etmemd error
++    ./bin/etmemd -s
++    ./bin/etmemd -h
++    ./bin/etmemd -l a
++    ./bin/etmemd
++    ./bin/etmemd -m
++    ./bin/etmemd -m A
++    ./bin/etmemd -h help
++    ./bin/etmemd -s test_socket socket
++    ./bin/etmemd -l 0 -s sock_slide_name &
++    sleep 1
++    ./bin/etmem engine shownothing -n proj_name -e cslide -t task_name -s sock_slide_name
++    killall etmemd
++}
++
++pre_test()
++{
++    echo "keep the param_val unchanged"
++    cp ${config_file} ${config_file_bak}
++    if [ ! -d ./../build ];then
++        echo -e "<build> directory \033[;31mnot exist\033[0m, pls check!"
++        exit 1;
++    fi
++    rm -f $project_configfile
++    cp ./bin/mem_swaptest ./bin/sysmem_swaptest
++    ./bin/mem_swaptest &
++    ./bin/sysmem_swaptest &
++}
++
++do_test()
++{
++    touch etmemd.log
++    ./bin/etmemd -l 0 -s sock_slide_name >etmemd.log 2>&1 &
++    sleep 1
++
++    add_project $1 $2 &
++    pidadd_project=$!
++    wait ${pidadd_project}
++
++    echo ""
++    echo "start to test slide of etmemd"
++
++    start_project &
++    pidstart_project=$!
++    wait ${pidstart_project}
++
++    sleep 20
++}
++
++post_test()
++{
++    pid_swap_test=`pidof mem_swaptest`
++    echo ${pid_swap_test}
++    pid_sysmem_swaptest=`pidof sysmem_swaptest`
++    echo ${pid_sysmem_swaptest}
++    mem_vmswap=$(cat /proc/${pid_swap_test}/status |grep VmSwap |awk '{print $2}')
++    echo ${mem_vmswap}
++
++    kill -9 ${pid_swap_test}
++    kill -9 ${pid_sysmem_swaptest}
++
++    echo "now to recover env"
++    rm -f ${config_file_bak}
++    rm -rf etmemd.log
++    killall etmemd
++}
++
++test_empty_config()
++{
++    ./bin/etmemd -l 0 -s dt_socket &
++    etmemd_pid=$!
++    sleep 1
++    echo "[not_used_group]" > ../conf/conf_slide/empty_config
++    echo "aaa=bbb" >> ../conf/conf_slide/empty_config
++    ./bin/etmem obj add -f ../conf/conf_slide/empty_config -s dt_socket
++    if [ "$?" == "0" ];then
++        echo "add empty config success unexpected"
++        exit 1
++    fi
++    ps -aux |grep -v grep |grep ${etmemd_pid}
++    if [ "$?" != "0" ];then
++        echo "etmemd exit unexpected after add empty config"
++        exit 1
++    fi
++    killall etmemd
++    rm -f ../conf/conf_slide/empty_config
++}
++
++test_error_config()
++{
++    echo "[task]" > ../conf/error_proj.config
++    echo "type=xxxxx" >> ../conf/error_proj.config
++
++    ./bin/etmemd -l 0 -s dt_socket &
++    etmemd_pid=$!
++    sleep 1
++    ./bin/etmem obj del -f ../conf/error_proj.config -s dt_socket
++    if [ "$?" == "0" ];then
++        echo "add error config success unexpected"
++        exit 1
++    fi
++    ps -aux |grep -v grep |grep ${etmemd_pid}
++    if [ "$?" != "0" ];then
++        echo "etmemd exit unexpected after add error config"
++        exit 1
++    fi
++    killall etmemd
++    rm -f ../conf/error_proj.config
++}
++
++test_noexist_config()
++{
++    ./bin/etmemd -l 0 -s dt_socket &
++    etmemd_pid=$!
++    sleep 1
++    ./bin/etmem obj add -f ../conf/noexist.config -s dt_socket
++    if [ "$?" == "0" ];then
++        echo "add noexist config success unexpected"
++        exit 1
++    fi
++    ps -aux |grep -v grep |grep ${etmemd_pid}
++    if [ "$?" != "0" ];then
++        echo "etmemd exit unexpected after add noexist config"
++        exit 1
++    fi
++    killall etmemd
++}
++
++test_sig_pipe()
++{
++    ./bin/etmemd -l 0 -s dt_socket &
++    etmemd_pid=$!
++    sleep 1
++    kill -13 ${etmemd_pid}
++    ps -aux |grep -v grep |grep ${etmemd_pid}
++    if [ "$?" != "0" ];then
++        echo "etmemd exit unexpected after recv SIGPIPE"
++        exit 1
++    fi
++    killall etmemd
++}
++
++test_etmem_help()
++{
++    ./bin/etmem help
++    if [ "$?" != "0" ];then
++        echo "etmem help return error unexpect"
++        exit 1
++    fi
++}
++
++rand_file_Str
++rand_pro_Str
++rand_sock_Str
++cmd_test
++pre_test
++do_test mem_swaptest sysmem_swaptest
++post_test
++
++test_sig_pipe
++test_empty_config
++test_error_config
++test_noexist_config
++test_etmem_help
+-- 
+1.8.3.1
+

@@ -1,0 +1,38 @@
+From 560e15aea0edc9bf53f33e739b6d430f4fe16150 Mon Sep 17 00:00:00 2001
+From: Kemeng Shi <shikemeng@huawei.com>
+Date: Tue, 19 Oct 2021 10:36:01 +0800
+Subject: [PATCH 01/33] etmem: correct example config file
+
+corret value config in cslide task
+corret node_pair config in cslide engine
+
+Signed-off-by: Kemeng Shi <shikemeng@huawei.com>
+---
+ etmem/conf/example_conf.yaml | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/etmem/conf/example_conf.yaml b/etmem/conf/example_conf.yaml
+index de612f6..61ee68c 100644
+--- a/etmem/conf/example_conf.yaml
++++ b/etmem/conf/example_conf.yaml
+@@ -22,7 +22,7 @@ max_threads=1
+ [engine]
+ name=cslide
+ project=test
+-node_pair=2,0;3,1
++node_pair=0,2;1,3
+ hot_threshold=1
+ node_mig_quota=1024
+ node_hot_reserve=1024
+@@ -32,7 +32,7 @@ project=test
+ engine=cslide
+ name=background_cslide
+ type=pid
+-name=23456
++value=23456
+ vm_flags=ht
+ anon_only=no
+ ign_host=no
+-- 
+1.8.3.1
+

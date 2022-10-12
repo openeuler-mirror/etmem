@@ -1,0 +1,378 @@
+From 4a70847689d4afd36368cc14153e152bd13018f4 Mon Sep 17 00:00:00 2001
+From: liubo <liubo254@huawei.com>
+Date: Mon, 7 Mar 2022 20:18:06 +0800
+Subject: [PATCH 25/33] etmem: testcode adaptation
+
+Adapt the etmem low level testcode so that
+it can be used normally in openeuler.
+Fix some error in test code.
+
+Signed-off-by: liubo <liubo254@huawei.com>
+---
+ etmem/test/CMakeLists.txt                                |  4 +++-
+ etmem/test/common/test_common.c                          |  1 +
+ etmem/test/common/test_common.h                          |  1 +
+ etmem/test/conf/conf_cslide/proj.config                  |  3 ++-
+ etmem/test/conf/conf_slide/config_file                   |  1 +
+ .../etmem_common_func_llt_test/etmem_common_func_llt.c   |  4 ++--
+ etmem/test/etmem_cslide_ops_llt_test/CMakeLists.txt      |  2 +-
+ etmem/test/etmem_cslide_ops_llt_test/mem_access.c        |  2 +-
+ .../etmem_project_ops_llt_test/etmem_project_ops_llt.c   |  4 ++--
+ etmem/test/etmem_scan_ops_export_llt_test/CMakeLists.txt |  2 +-
+ etmem/test/etmem_scan_ops_llt_test/CMakeLists.txt        |  2 +-
+ etmem/test/etmem_scan_ops_llt_test/etmem_scan_ops_llt.c  | 16 ++++++++++++++--
+ .../test/etmem_slide_ops_llt_test/etmem_slide_ops_llt.c  |  9 ---------
+ etmem/test/etmem_slide_ops_llt_test/test_slide_ops.sh    |  0
+ etmem/test/etmem_socket_ops_llt_test/CMakeLists.txt      |  2 +-
+ .../etmem_thirdparty_ops_llt.c                           |  8 ++++----
+ etmem/test/etmem_thirdparty_ops_llt_test/my_engine.c     |  1 +
+ etmem/test/etmem_threadpool_ops_llt_test/CMakeLists.txt  |  2 +-
+ .../etmem_threadpool_ops_llt.c                           | 10 +++++++++-
+ etmem/test/etmem_timer_ops_llt_test/CMakeLists.txt       |  2 +-
+ 20 files changed, 47 insertions(+), 29 deletions(-)
+ mode change 100644 => 100755 etmem/test/etmem_slide_ops_llt_test/test_slide_ops.sh
+
+diff --git a/etmem/test/CMakeLists.txt b/etmem/test/CMakeLists.txt
+index 3cc9bf6..a380e98 100644
+--- a/etmem/test/CMakeLists.txt
++++ b/etmem/test/CMakeLists.txt
+@@ -60,6 +60,7 @@ set(ETMEMD_CSLIDE_DEP
+  ${ETMEMD_SRC_DIR}/etmemd_log.c
+  ${ETMEMD_SRC_DIR}/etmemd_project.c
+  ${ETMEMD_SRC_DIR}/etmemd_engine.c
++ ${ETMEMD_SRC_DIR}/etmemd_memdcd.c
+  ${ETMEMD_SRC_DIR}/etmemd_slide.c
+  ${ETMEMD_SRC_DIR}/etmemd_thirdparty.c
+  ${ETMEMD_SRC_DIR}/etmemd_task.c
+@@ -67,7 +68,8 @@ set(ETMEMD_CSLIDE_DEP
+  ${ETMEMD_SRC_DIR}/etmemd_threadpool.c
+  ${ETMEMD_SRC_DIR}/etmemd_threadtimer.c
+  ${ETMEMD_SRC_DIR}/etmemd_pool_adapter.c
+- ${ETMEMD_SRC_DIR}/etmemd_migrate.c)
++ ${ETMEMD_SRC_DIR}/etmemd_migrate.c
++ ${ETMEMD_SRC_DIR}/etmemd_damon.c)
+ 
+ set(TEST_COMMON_SRC
+  ${TEST_COMMON_DIR}/test_common.c)
+diff --git a/etmem/test/common/test_common.c b/etmem/test/common/test_common.c
+index 4bd3fc3..db3b843 100644
+--- a/etmem/test/common/test_common.c
++++ b/etmem/test/common/test_common.c
+@@ -51,6 +51,7 @@ void construct_proj_file(struct proj_test_param *param)
+     file = fopen(param->file_name, "w+");
+     CU_ASSERT_PTR_NOT_NULL(file);
+     CU_ASSERT_NOT_EQUAL(fprintf(file, "[project]\n"), -1);
++    CU_ASSERT_NOT_EQUAL(fprintf(file, CONFIG_SCAN_TYPE, "page"), -1);
+     if (param->proj_name != NULL) {
+         CU_ASSERT_NOT_EQUAL(fprintf(file, CONFIG_NAME, param->proj_name), -1);
+     }
+diff --git a/etmem/test/common/test_common.h b/etmem/test/common/test_common.h
+index 1ba20c7..2a42f78 100644
+--- a/etmem/test/common/test_common.h
++++ b/etmem/test/common/test_common.h
+@@ -21,6 +21,7 @@
+ #include "etmemd_project.h"
+ 
+ #define CONFIG_NAME                         "name=%s\n"
++#define CONFIG_SCAN_TYPE                    "scan_type=%s\n"
+ #define CONFIG_INTERVAL                     "interval=%s\n"
+ #define CONFIG_LOOP                         "loop=%s\n"
+ #define CONFIG_SLEEP                        "sleep=%s\n"
+diff --git a/etmem/test/conf/conf_cslide/proj.config b/etmem/test/conf/conf_cslide/proj.config
+index 1174df3..ca002ee 100644
+--- a/etmem/test/conf/conf_cslide/proj.config
++++ b/etmem/test/conf/conf_cslide/proj.config
+@@ -1,5 +1,6 @@
+ [project]
+ name=test
++scan_type=page
+ loop=3
+ interval=1
+-sleep=1
+\ No newline at end of file
++sleep=1
+diff --git a/etmem/test/conf/conf_slide/config_file b/etmem/test/conf/conf_slide/config_file
+index 5d9f965..b7eaae9 100644
+--- a/etmem/test/conf/conf_slide/config_file
++++ b/etmem/test/conf/conf_slide/config_file
+@@ -1,5 +1,6 @@
+ [project]
+ name=test
++scan_type=page
+ loop=1
+ interval=1
+ sleep=1
+diff --git a/etmem/test/etmem_common_func_llt_test/etmem_common_func_llt.c b/etmem/test/etmem_common_func_llt_test/etmem_common_func_llt.c
+index 1ba6299..3700baa 100644
+--- a/etmem/test/etmem_common_func_llt_test/etmem_common_func_llt.c
++++ b/etmem/test/etmem_common_func_llt_test/etmem_common_func_llt.c
+@@ -138,11 +138,11 @@ static void test_parse_cmdline_ok(void)
+     char *cmd_ok[] = {"./etmemd", "-l", "0", "-s", "cmd_ok"};
+     char *cmd_only_sock[] = {"./etmemd", "-s", "cmd_only_sock"};
+ 
+-    CU_ASSERT_EQUAL(etmemd_parse_cmdline(sizeof(cmd) / sizeof(cmd[0]), cmd, &is_help), 0);
++    CU_ASSERT_EQUAL(etmemd_parse_cmdline(sizeof(cmd_ok) / sizeof(cmd_ok[0]), cmd_ok, &is_help), 0);
+     etmemd_sock_name_free();
+     clean_flags(&is_help);
+ 
+-    CU_ASSERT_EQUAL(etmemd_parse_cmdline(sizeof(cmd_ok) / sizeof(cmd_ok[0]), cmd_ok, &is_help), 0);
++    CU_ASSERT_EQUAL(etmemd_parse_cmdline(sizeof(cmd) / sizeof(cmd[0]), cmd, &is_help), 0);
+     clean_flags(&is_help);
+ 
+     CU_ASSERT_EQUAL(etmemd_parse_cmdline(sizeof(cmd_h) / sizeof(cmd_h[0]), cmd_h, &is_help), 0);
+diff --git a/etmem/test/etmem_cslide_ops_llt_test/CMakeLists.txt b/etmem/test/etmem_cslide_ops_llt_test/CMakeLists.txt
+index 6ff709b..dce5a60 100644
+--- a/etmem/test/etmem_cslide_ops_llt_test/CMakeLists.txt
++++ b/etmem/test/etmem_cslide_ops_llt_test/CMakeLists.txt
+@@ -26,5 +26,5 @@ SET(EXE etmem_cslide_ops_llt)
+ add_executable(${EXE} etmem_cslide_ops_llt.c)
+ add_executable(mem_access mem_access.c)
+ 
+-target_link_libraries(${EXE} cunit ${BUILD_DIR}/lib/libcslide.so ${BUILD_DIR}/lib/libtest.so pthread dl rt boundscheck numa ${GLIB2_LIBRARIES})
++target_link_libraries(${EXE} cunit ${BUILD_DIR}/lib/libcslide_dep.so ${BUILD_DIR}/lib/libtest.so pthread dl rt boundscheck numa ${GLIB2_LIBRARIES})
+ target_link_libraries(mem_access numa)
+diff --git a/etmem/test/etmem_cslide_ops_llt_test/mem_access.c b/etmem/test/etmem_cslide_ops_llt_test/mem_access.c
+index 56ad47e..a64d865 100644
+--- a/etmem/test/etmem_cslide_ops_llt_test/mem_access.c
++++ b/etmem/test/etmem_cslide_ops_llt_test/mem_access.c
+@@ -57,7 +57,7 @@ int main(int argc, char **argv)
+ 
+     if (argc > 3) {
+         dst_node = atoi(argv[1]);
+-        len = (long long)atoi(argv[2] << BYTE_TO_MB_SHIFT);
++        len = (long long)atoi(argv[2]) << BYTE_TO_MB_SHIFT;
+         is_busy = atoi(argv[3]);
+     } else {
+         printf("%s node size(MB) is busy\n", argv[0]);
+diff --git a/etmem/test/etmem_project_ops_llt_test/etmem_project_ops_llt.c b/etmem/test/etmem_project_ops_llt_test/etmem_project_ops_llt.c
+index 65c1fc6..8392402 100644
+--- a/etmem/test/etmem_project_ops_llt_test/etmem_project_ops_llt.c
++++ b/etmem/test/etmem_project_ops_llt_test/etmem_project_ops_llt.c
+@@ -417,7 +417,7 @@ static void add_project_once(void)
+     etmem_pro_add_swapcache_mark_ok();
+     init_proj_param(&param);
+ 
+-    CU_ASSERT_EQUAL(etmemd_project_show(NULL, 0), OPT_PRO_NOEXIST);
++    CU_ASSERT_EQUAL(etmemd_project_show(NULL, 0), OPT_SUCCESS);
+ 
+     config = construct_proj_config(&param);
+     CU_ASSERT_EQUAL(etmemd_project_add(config), OPT_SUCCESS);
+@@ -429,7 +429,7 @@ static void add_project_once(void)
+     CU_ASSERT_EQUAL(etmemd_project_remove(config), OPT_SUCCESS);
+     destroy_proj_config(config);
+ 
+-    CU_ASSERT_EQUAL(etmemd_project_show("noexist", 0), OPT_PRO_NOEXIST);
++    CU_ASSERT_EQUAL(etmemd_project_show("noexist", 0), OPT_SUCCESS);
+ }
+ 
+ static int add_project_multiple(int proj_add_num)
+diff --git a/etmem/test/etmem_scan_ops_export_llt_test/CMakeLists.txt b/etmem/test/etmem_scan_ops_export_llt_test/CMakeLists.txt
+index be68154..587d621 100644
+--- a/etmem/test/etmem_scan_ops_export_llt_test/CMakeLists.txt
++++ b/etmem/test/etmem_scan_ops_export_llt_test/CMakeLists.txt
+@@ -23,4 +23,4 @@ SET(EXE etmem_scan_ops_export_llt)
+ 
+ add_executable(${EXE} etmem_scan_ops_export_llt.c)
+ 
+-target_link_libraries(${EXE} cunit ${BUILD_DIR}/lib/libetmemd.so pthread dl rt libboundscheck numa ${GLIB2_LIBRARIES})
++target_link_libraries(${EXE} cunit ${BUILD_DIR}/lib/libetmemd.so pthread dl rt boundscheck numa ${GLIB2_LIBRARIES})
+diff --git a/etmem/test/etmem_scan_ops_llt_test/CMakeLists.txt b/etmem/test/etmem_scan_ops_llt_test/CMakeLists.txt
+index b5378b8..df50f80 100644
+--- a/etmem/test/etmem_scan_ops_llt_test/CMakeLists.txt
++++ b/etmem/test/etmem_scan_ops_llt_test/CMakeLists.txt
+@@ -23,4 +23,4 @@ SET(EXE etmem_scan_ops_llt)
+ 
+ add_executable(${EXE} etmem_scan_ops_llt.c)
+ 
+-target_link_libraries(${EXE} cunit ${BUILD_DIR}/lib/libetmemd.so pthread dl rt libboundscheck numa ${GLIB2_LIBRARIES})
++target_link_libraries(${EXE} cunit ${BUILD_DIR}/lib/libetmemd.so pthread dl rt boundscheck numa ${GLIB2_LIBRARIES})
+diff --git a/etmem/test/etmem_scan_ops_llt_test/etmem_scan_ops_llt.c b/etmem/test/etmem_scan_ops_llt_test/etmem_scan_ops_llt.c
+index 84fcf69..cb1ccbc 100644
+--- a/etmem/test/etmem_scan_ops_llt_test/etmem_scan_ops_llt.c
++++ b/etmem/test/etmem_scan_ops_llt_test/etmem_scan_ops_llt.c
+@@ -42,12 +42,18 @@ static struct task *alloc_tk(int loop, int sleep)
+     struct task *tk = NULL;
+     struct project *proj = NULL;
+     struct engine *eng = NULL;
++    struct page_scan *page_scan = NULL;
++
++    page_scan = (struct page_scan *)calloc(1, sizeof(struct page_scan));
++    CU_ASSERT_PTR_NOT_NULL(page_scan);
+ 
+     proj = (struct project *)calloc(1, sizeof(struct project));
+     CU_ASSERT_PTR_NOT_NULL(proj);
+ 
+-    proj->loop = loop;
+-    proj->sleep = sleep;
++    proj->scan_param = page_scan;
++    proj->type = PAGE_SCAN;
++    page_scan->loop = loop;
++    page_scan->sleep = sleep;
+ 
+     tk = (struct task *)calloc(1, sizeof(struct task));
+     CU_ASSERT_PTR_NOT_NULL(tk);
+@@ -272,6 +278,9 @@ static void test_scan_error(void)
+     CU_ASSERT_PTR_NULL(etmemd_do_scan(tpid, NULL));
+     CU_ASSERT_PTR_NULL(etmemd_do_scan(tpid, tk));
+ 
++    free(tk->eng->proj->scan_param);
++    free(tk->eng->proj);
++    free(tk->eng);
+     free(tk);
+     free(tpid);
+ }
+@@ -292,6 +301,9 @@ static void test_etmem_scan_ok(void)
+ 
+     page_refs = etmemd_do_scan(tpid, tk);
+     CU_ASSERT_PTR_NOT_NULL(page_refs);
++    free(tk->eng->proj->scan_param);
++    free(tk->eng->proj);
++    free(tk->eng);
+     free(tk);
+     free(tpid);
+     clean_page_refs_unexpected(&page_refs);
+diff --git a/etmem/test/etmem_slide_ops_llt_test/etmem_slide_ops_llt.c b/etmem/test/etmem_slide_ops_llt_test/etmem_slide_ops_llt.c
+index 3a04a86..4521a60 100644
+--- a/etmem/test/etmem_slide_ops_llt_test/etmem_slide_ops_llt.c
++++ b/etmem/test/etmem_slide_ops_llt_test/etmem_slide_ops_llt.c
+@@ -275,9 +275,6 @@ static void test_etmem_task_swap_flag_error(void)
+     CU_ASSERT_EQUAL(etmemd_project_remove_task(config), OPT_SUCCESS);
+     destroy_slide_task_config(config);
+ 
+-    /* run slide_policy_interface fail */
+-    CU_ASSERT_EQUAL(slide_policy_interface(NULL, NULL), NULL);
+-
+     /* run slide_do_migrate fail */
+     CU_ASSERT_EQUAL(slide_do_migrate(1, NULL), -1);
+ 
+@@ -355,9 +352,6 @@ static void test_etmem_task_swap_threshold_error(void)
+     CU_ASSERT_EQUAL(etmemd_project_remove_task(config), OPT_SUCCESS);
+     destroy_slide_task_config(config);
+ 
+-    /* run slide_policy_interface fail */
+-    CU_ASSERT_EQUAL(slide_policy_interface(NULL, NULL), NULL);
+-
+     /* run slide_do_migrate fail */
+     CU_ASSERT_EQUAL(slide_do_migrate(1, NULL), -1);
+ 
+@@ -557,9 +551,6 @@ static void test_task_slide_invalid_config(void)
+     CU_ASSERT_EQUAL(etmemd_project_remove_task(config), OPT_SUCCESS);
+     destroy_slide_task_config(config);
+ 
+-    /* run slide_policy_interface fail */
+-    CU_ASSERT_EQUAL(slide_policy_interface(NULL, NULL), NULL);
+-
+     /* run slide_do_migrate fail */
+     CU_ASSERT_EQUAL(slide_do_migrate(1, NULL), -1);
+ }
+diff --git a/etmem/test/etmem_slide_ops_llt_test/test_slide_ops.sh b/etmem/test/etmem_slide_ops_llt_test/test_slide_ops.sh
+old mode 100644
+new mode 100755
+diff --git a/etmem/test/etmem_socket_ops_llt_test/CMakeLists.txt b/etmem/test/etmem_socket_ops_llt_test/CMakeLists.txt
+index 05239a0..e1d5591 100644
+--- a/etmem/test/etmem_socket_ops_llt_test/CMakeLists.txt
++++ b/etmem/test/etmem_socket_ops_llt_test/CMakeLists.txt
+@@ -23,4 +23,4 @@ SET(EXE etmem_socket_ops_llt)
+ 
+ add_executable(${EXE} etmem_socket_ops_llt.c)
+ 
+-target_link_libraries(${EXE} cunit ${BUILD_DIR}/lib/libetmemd.so pthread dl rt boundscheck numa ${GLIB2_LIBRARIES})
++target_link_libraries(${EXE} cunit ${BUILD_DIR}/lib/libetmemd.so ${BUILD_DIR}/lib/libetmem.so pthread dl rt boundscheck numa ${GLIB2_LIBRARIES})
+diff --git a/etmem/test/etmem_thirdparty_ops_llt_test/etmem_thirdparty_ops_llt.c b/etmem/test/etmem_thirdparty_ops_llt_test/etmem_thirdparty_ops_llt.c
+index d7e7ae4..29a7e2f 100644
+--- a/etmem/test/etmem_thirdparty_ops_llt_test/etmem_thirdparty_ops_llt.c
++++ b/etmem/test/etmem_thirdparty_ops_llt_test/etmem_thirdparty_ops_llt.c
+@@ -160,11 +160,11 @@ void test_etmem_user_engine_0001(void)
+ 
+     /* test param NULL */
+     CU_ASSERT_EQUAL(etmemd_project_mgt_engine(NULL, NULL, 
+-                                              NULL, DEFAULT_TASK, 0), OPT_SUCCESS);
++                                              NULL, DEFAULT_TASK, 0), OPT_INVAL);
+     CU_ASSERT_EQUAL(etmemd_project_mgt_engine(DEFAULT_PROJ, "no_exist_engine", 
+-                                              "my_cmd", DEFAULT_TASK, 0), OPT_SUCCESS);
++                                              "my_cmd", DEFAULT_TASK, 0), OPT_ENG_NOEXIST);
+     CU_ASSERT_EQUAL(etmemd_project_mgt_engine(DEFAULT_PROJ, "my_engine", 
+-                                              "my_cmd", "no_exist_task", 0), OPT_SUCCESS);
++                                              "my_cmd", "no_exist_task", 0), OPT_TASK_NOEXIST);
+ 
+     CU_ASSERT_EQUAL(etmemd_migrate_stop(DEFAULT_PROJ), OPT_SUCCESS);
+ 
+@@ -219,7 +219,7 @@ static void test_etmem_user_engine_null(void)
+     CU_ASSERT_EQUAL(etmemd_project_add_engine(eng_config), OPT_SUCCESS);
+     CU_ASSERT_EQUAL(etmemd_project_add_task(task_config), OPT_SUCCESS);
+     CU_ASSERT_EQUAL(etmemd_migrate_start(DEFAULT_PROJ), OPT_SUCCESS);
+-    CU_ASSERT_EQUAL(etmemd_project_mgt_engine(DEFAULT_PROJ, "my_engine", 
++    CU_ASSERT_NOT_EQUAL(etmemd_project_mgt_engine(DEFAULT_PROJ, "my_engine", 
+                                               "my_cmd", DEFAULT_TASK, 0), OPT_SUCCESS);
+     CU_ASSERT_EQUAL(etmemd_migrate_stop(DEFAULT_PROJ), OPT_SUCCESS);
+ 
+diff --git a/etmem/test/etmem_thirdparty_ops_llt_test/my_engine.c b/etmem/test/etmem_thirdparty_ops_llt_test/my_engine.c
+index bd2a3bc..891e9d4 100644
+--- a/etmem/test/etmem_thirdparty_ops_llt_test/my_engine.c
++++ b/etmem/test/etmem_thirdparty_ops_llt_test/my_engine.c
+@@ -17,6 +17,7 @@
+ #include <unistd.h>
+ #include <string.h>
+ 
++#include "test_common.h"
+ #include "etmemd_thirdparty_export.h"
+ 
+ char *get_private_value(GKeyFile *config, char *group, char *key)
+diff --git a/etmem/test/etmem_threadpool_ops_llt_test/CMakeLists.txt b/etmem/test/etmem_threadpool_ops_llt_test/CMakeLists.txt
+index cb084cf..865620d 100644
+--- a/etmem/test/etmem_threadpool_ops_llt_test/CMakeLists.txt
++++ b/etmem/test/etmem_threadpool_ops_llt_test/CMakeLists.txt
+@@ -23,4 +23,4 @@ SET(EXE etmem_threadpool_ops_llt)
+ 
+ add_executable(${EXE} etmem_threadpool_ops_llt.c)
+ 
+-target_link_libraries(${EXE} cunit ${BUILD_DIR}/lib/libetmemd.so pthread dl rt libboundscheck numa ${GLIB2_LIBRARIES})
++target_link_libraries(${EXE} cunit ${BUILD_DIR}/lib/libetmemd.so pthread dl rt boundscheck numa ${GLIB2_LIBRARIES})
+diff --git a/etmem/test/etmem_threadpool_ops_llt_test/etmem_threadpool_ops_llt.c b/etmem/test/etmem_threadpool_ops_llt_test/etmem_threadpool_ops_llt.c
+index 9917954..0b6ade1 100644
+--- a/etmem/test/etmem_threadpool_ops_llt_test/etmem_threadpool_ops_llt.c
++++ b/etmem/test/etmem_threadpool_ops_llt_test/etmem_threadpool_ops_llt.c
+@@ -147,7 +147,13 @@ static void test_thpool_addwk_mul(void)
+ 
+ static void init_thpool_objs(struct project *proj, struct engine *eng, struct task *tk)
+ {
+-    proj->interval = 1;
++    struct page_scan *page_scan = (struct page_scan *)calloc(1, sizeof(struct page_scan));
++    CU_ASSERT_PTR_NOT_NULL(page_scan);
++    proj->scan_param = page_scan;
++    proj->type = PAGE_SCAN;
++    page_scan->interval = 1;
++    page_scan->loop = 1;
++    page_scan->sleep = 1;
+     proj->start = true;
+     proj->name = "test_project";
+     eng->proj = proj;
+@@ -170,6 +176,7 @@ static void test_thpool_start_error(void)
+     g_test_exec.tk = &tk;
+ 
+     CU_ASSERT_EQUAL(start_threadpool_work(&g_test_exec), -1);
++    free(proj.scan_param);
+ }
+ 
+ static void *task_executor(void *arg)
+@@ -193,6 +200,7 @@ static void test_thpool_start_stop(void)
+     /* wait threadpool to work */
+     sleep(2);
+     stop_and_delete_threadpool_work(&tk);
++    free(proj.scan_param);
+ }
+ 
+ typedef enum {
+diff --git a/etmem/test/etmem_timer_ops_llt_test/CMakeLists.txt b/etmem/test/etmem_timer_ops_llt_test/CMakeLists.txt
+index 76aa48e..e5a815e 100644
+--- a/etmem/test/etmem_timer_ops_llt_test/CMakeLists.txt
++++ b/etmem/test/etmem_timer_ops_llt_test/CMakeLists.txt
+@@ -23,4 +23,4 @@ SET(EXE etmem_timer_ops_llt)
+ 
+ add_executable(${EXE} etmem_timer_ops_llt.c)
+ 
+-target_link_libraries(${EXE} cunit ${BUILD_DIR}/lib/libetmemd.so pthread dl rt libboundscheck numa ${GLIB2_LIBRARIES})
++target_link_libraries(${EXE} cunit ${BUILD_DIR}/lib/libetmemd.so pthread dl rt boundscheck numa ${GLIB2_LIBRARIES})
+-- 
+1.8.3.1
+

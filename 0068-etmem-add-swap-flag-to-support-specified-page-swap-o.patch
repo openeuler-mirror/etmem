@@ -1,0 +1,434 @@
+From d6e4942b34bbcbfaec8b0d4702f0e385f8d267f1 Mon Sep 17 00:00:00 2001
+From: liubo <liubo254@huawei.com>
+Date: Tue, 18 Jan 2022 15:55:29 +0800
+Subject: [PATCH 18/33] etmem: add swap flag to support specified page swap out
+
+The existing memory expansion tool etmem swaps out
+all pages that can be swapped out for the process by
+default, unless the page is marked with lock flag.
+
+The function of swapping out specified pages is add.
+The process adds special flag for pages to be swapped
+out. This function depends on etmem_scan module.
+
+Added swap_flag field to indicate that a tagged swap
+out is used for this process instead of the default
+swap out.
+
+Signed-off-by: liubo <liubo254@huawei.com>
+---
+ etmem/conf/slide_conf.yaml             |  1 +
+ etmem/inc/etmemd_inc/etmemd_common.h   | 14 +++-----------
+ etmem/inc/etmemd_inc/etmemd_scan.h     |  9 +++++++--
+ etmem/inc/etmemd_inc/etmemd_scan_exp.h |  1 +
+ etmem/inc/etmemd_inc/etmemd_slide.h    |  7 ++++++-
+ etmem/inc/etmemd_inc/etmemd_task_exp.h |  1 +
+ etmem/src/etmemd_src/etmemd_common.c   | 34 +++++++++++++++++++---------------
+ etmem/src/etmemd_src/etmemd_migrate.c  |  8 ++++++--
+ etmem/src/etmemd_src/etmemd_scan.c     | 24 ++++++++++++++++--------
+ etmem/src/etmemd_src/etmemd_slide.c    | 12 ++++++------
+ etmem/src/etmemd_src/etmemd_task.c     | 23 +++++++++++++++++++++++
+ 11 files changed, 89 insertions(+), 45 deletions(-)
+
+diff --git a/etmem/conf/slide_conf.yaml b/etmem/conf/slide_conf.yaml
+index f55c508..8169b7d 100644
+--- a/etmem/conf/slide_conf.yaml
++++ b/etmem/conf/slide_conf.yaml
+@@ -21,3 +21,4 @@ value=mysql
+ T=1
+ max_threads=1
+ swap_threshold=10g
++swap_flag=yes
+diff --git a/etmem/inc/etmemd_inc/etmemd_common.h b/etmem/inc/etmemd_inc/etmemd_common.h
+index ced606e..03792a7 100644
+--- a/etmem/inc/etmemd_inc/etmemd_common.h
++++ b/etmem/inc/etmemd_inc/etmemd_common.h
+@@ -34,7 +34,7 @@
+ 
+ #define BYTE_TO_KB(s)                   ((s) >> 10)
+ #define KB_TO_BYTE(s)                   ((s) << 10)
+-#define CONVERT_GB_2_KB                 (1024 * 1024)
++#define GB_TO_KB(s)                     ((s) << 20)
+ 
+ #define MAX_SWAPCACHE_WMARK_VALUE       100
+ 
+@@ -46,17 +46,9 @@
+ 
+ #define PIPE_FD_LEN                     2
+ 
+-#define IDLE_SCAN_MAGIC                 0x66
+-#define IDLE_SCAN_ADD_FLAGS             _IOW(IDLE_SCAN_MAGIC, 0x0, unsigned int)
+-
+-enum swap_type {
+-    DONT_SWAP = 0,
+-    DO_SWAP,
+-};
+-
+ struct ioctl_para {
+     unsigned long ioctl_cmd;
+-    int ioctl_parameter;
++    unsigned int ioctl_parameter;
+ };
+ 
+ /*
+@@ -87,6 +79,6 @@ int get_mem_from_proc_file(const char *pid, const char *file_name, unsigned long
+ 
+ int dprintf_all(int fd, const char *format, ...);
+ 
+-int get_swap_threshold_inKB(char *string);
++int get_swap_threshold_inKB(const char *string, unsigned long *value);
+ 
+ #endif
+diff --git a/etmem/inc/etmemd_inc/etmemd_scan.h b/etmem/inc/etmemd_inc/etmemd_scan.h
+index 9e5bcc4..7c25152 100644
+--- a/etmem/inc/etmemd_inc/etmemd_scan.h
++++ b/etmem/inc/etmemd_inc/etmemd_scan.h
+@@ -20,6 +20,7 @@
+ #include "etmemd.h"
+ #include "etmemd_task.h"
+ #include "etmemd_scan_exp.h"
++#include "etmemd_common.h"
+ 
+ #define VMA_SEG_CNT_MAX         6
+ #define VMA_PERMS_STR_LEN       5
+@@ -34,7 +35,10 @@
+ #define SMAPS_FILE              "/smaps"
+ #define VMFLAG_HEAD             "VmFlags"
+ 
+-#define ALL_SCAN_FLAGS          (SCAN_AS_HUGE | SCAN_IGN_HOST)
++#define IDLE_SCAN_MAGIC         0x66
++#define IDLE_SCAN_ADD_FLAGS     _IOW(IDLE_SCAN_MAGIC, 0x0, unsigned int)
++#define VMA_SCAN_ADD_FLAGS      _IOW(IDLE_SCAN_MAGIC, 0x2, unsigned int)
++#define ALL_SCAN_FLAGS          (SCAN_AS_HUGE | SCAN_IGN_HOST | VMA_SCAN_FLAG)
+ 
+ enum page_idle_type {
+     PTE_ACCESS = 0,     /* 4k page */
+@@ -70,7 +74,8 @@ struct page_refs *etmemd_do_scan(const struct task_pid *tpid, const struct task
+ void free_vmas(struct vmas *vmas);
+ 
+ struct page_refs **walk_vmas(int fd, struct walk_address *walk_address, struct page_refs **pf, unsigned long *use_rss);
+-int get_page_refs(const struct vmas *vmas, const char *pid, struct page_refs **page_refs, unsigned long *use_rss, int flags);
++int get_page_refs(const struct vmas *vmas, const char *pid, struct page_refs **page_refs,
++                  unsigned long *use_rss, struct ioctl_para *ioctl_para);
+ 
+ int split_vmflags(char ***vmflags_array, char *vmflags);
+ struct vmas *get_vmas_with_flags(const char *pid, char **vmflags_array, int vmflags_num, bool is_anon_only);
+diff --git a/etmem/inc/etmemd_inc/etmemd_scan_exp.h b/etmem/inc/etmemd_inc/etmemd_scan_exp.h
+index 1fd4379..7be925c 100644
+--- a/etmem/inc/etmemd_inc/etmemd_scan_exp.h
++++ b/etmem/inc/etmemd_inc/etmemd_scan_exp.h
+@@ -25,6 +25,7 @@
+ 
+ #define SCAN_AS_HUGE            0100000000      /* treat normal vm page as vm hugepage */
+ #define SCAN_IGN_HOST           0200000000      /* ignore host access when scan vm */
++#define VMA_SCAN_FLAG           0x1000          /* scan the specifics vma with flag */
+ 
+ enum {
+     VMA_STAT_READ = 0,
+diff --git a/etmem/inc/etmemd_inc/etmemd_slide.h b/etmem/inc/etmemd_inc/etmemd_slide.h
+index 7c80502..726c721 100644
+--- a/etmem/inc/etmemd_inc/etmemd_slide.h
++++ b/etmem/inc/etmemd_inc/etmemd_slide.h
+@@ -22,10 +22,15 @@
+ struct slide_params {
+     struct task_executor *executor;
+     int t;          /* watermark */
+-    int swap_threshold;
++    unsigned long swap_threshold;
+     uint8_t dram_percent;
+ };
+ 
++enum swap_type {
++    DONT_SWAP = 0,
++    DO_SWAP,
++};
++
+ int fill_engine_type_slide(struct engine *eng, GKeyFile *config);
+ 
+ #endif
+diff --git a/etmem/inc/etmemd_inc/etmemd_task_exp.h b/etmem/inc/etmemd_inc/etmemd_task_exp.h
+index 33d505a..6f775b6 100644
+--- a/etmem/inc/etmemd_inc/etmemd_task_exp.h
++++ b/etmem/inc/etmemd_inc/etmemd_task_exp.h
+@@ -29,6 +29,7 @@ struct task {
+     char *value;
+     char *name;
+     int max_threads;
++    int swap_flag;
+ 
+     struct task_pid *pids;
+     struct engine *eng;
+diff --git a/etmem/src/etmemd_src/etmemd_common.c b/etmem/src/etmemd_src/etmemd_common.c
+index bb72fd0..dfbae6d 100644
+--- a/etmem/src/etmemd_src/etmemd_common.c
++++ b/etmem/src/etmemd_src/etmemd_common.c
+@@ -261,7 +261,7 @@ static char *etmemd_get_proc_file_str(const char *pid, const char *file)
+     }
+ 
+     if (snprintf_s(file_name, file_str_size, file_str_size - 1, 
+-                    "%s%s%s", PROC_PATH, pid ? pid : "", file) == -1) {
++                    "%s%s%s", PROC_PATH, pid == NULL ? "" : pid, file) == -1) {
+         etmemd_log(ETMEMD_LOG_ERR, "snprintf for %s fail\n", file);
+         free(file_name);
+         return NULL;
+@@ -274,8 +274,8 @@ int etmemd_send_ioctl_cmd(FILE *fp, struct ioctl_para *request)
+ {
+     int fd = -1;
+ 
+-    if (fp == NULL) {
+-        etmemd_log(ETMEMD_LOG_ERR, "send ioctl cmd fail, fp is null\n");
++    if (fp == NULL || request == NULL) {
++        etmemd_log(ETMEMD_LOG_ERR, "send ioctl cmd fail, para is null\n");
+         return -1;
+     }
+ 
+@@ -285,8 +285,8 @@ int etmemd_send_ioctl_cmd(FILE *fp, struct ioctl_para *request)
+         return -1;
+     }
+ 
+-    if (request == NULL || ioctl(fd, request->ioctl_cmd, &request->ioctl_parameter) != 0) {
+-        etmemd_log(ETMEMD_LOG_ERR, "send ioctl cmd fail, request is wrong\n");
++    if (ioctl(fd, request->ioctl_cmd, &request->ioctl_parameter) != 0) {
++        etmemd_log(ETMEMD_LOG_ERR, "ioctl failed\n");
+         return -1;
+     }
+ 
+@@ -298,6 +298,11 @@ FILE *etmemd_get_proc_file(const char *pid, const char *file, const char *mode)
+     char *file_name = NULL;
+     FILE *fp = NULL;
+ 
++    if (file == NULL) {
++        etmemd_log(ETMEMD_LOG_ERR, "etmemd_get_proc_file file should not be NULL\n");
++        return NULL;
++    }
++
+     file_name = etmemd_get_proc_file_str(pid, file);
+     if (file_name == NULL) {
+         return NULL;
+@@ -498,22 +503,21 @@ unsigned long get_pagesize(void)
+     return (unsigned long)pagesize;
+ }
+ 
+-int get_swap_threshold_inKB(char *string)
++int get_swap_threshold_inKB(const char *string, unsigned long *value)
+ {
+     int len;
+     int i;
+     int ret = -1;
+     char *swap_threshold_string = NULL;
+-    int swap_threshold_inGB;
+-    int swap_threshold_inKB;
++    unsigned long swap_threshold_inGB;
+ 
+-    if (string == NULL) {
++    if (string == NULL || value == NULL) {
+         goto out;
+     }
+ 
+     len = strlen(string);
+-    if (len > SWAP_THRESHOLD_MAX_LEN) {
+-        etmemd_log(ETMEMD_LOG_ERR, "swap_threshold string is too long.\n");
++    if (len == 0 || len > SWAP_THRESHOLD_MAX_LEN) {
++        etmemd_log(ETMEMD_LOG_ERR, "swap_threshold string is invalid.\n");
+         goto out;
+     }
+ 
+@@ -537,13 +541,13 @@ int get_swap_threshold_inKB(char *string)
+         goto free_out;
+     }
+ 
+-    if (get_int_value(swap_threshold_string, &swap_threshold_inGB) != 0) {
+-        etmemd_log(ETMEMD_LOG_ERR, "get_int_value swap_threshold faild.\n");
++    if (get_unsigned_long_value(swap_threshold_string, &swap_threshold_inGB) != 0) {
++        etmemd_log(ETMEMD_LOG_ERR, "get_unsigned_long_value swap_threshold faild.\n");
+         goto free_out;
+     }
+ 
+-    swap_threshold_inKB = swap_threshold_inGB * CONVERT_GB_2_KB;
+-    ret = swap_threshold_inKB;
++    *value = GB_TO_KB(swap_threshold_inGB);
++    ret = 0;
+ 
+ free_out:
+     free(swap_threshold_string);
+diff --git a/etmem/src/etmemd_src/etmemd_migrate.c b/etmem/src/etmemd_src/etmemd_migrate.c
+index 87bfde0..a5cce41 100644
+--- a/etmem/src/etmemd_src/etmemd_migrate.c
++++ b/etmem/src/etmemd_src/etmemd_migrate.c
+@@ -131,7 +131,8 @@ static bool check_should_reclaim_swapcache(const struct task_pid *tk_pid)
+         return false;
+     }
+ 
+-    if ((swapcache_total / proj->swapcache_high_wmark) <= (mem_total / MAX_SWAPCACHE_WMARK_VALUE)) {
++    if (swapcache_total == 0 ||
++        (mem_total / swapcache_total) >= (unsigned long)(MAX_SWAPCACHE_WMARK_VALUE / proj->swapcache_high_wmark)) {
+         return false;
+     }
+ 
+@@ -190,7 +191,10 @@ int etmemd_reclaim_swapcache(const struct task_pid *tk_pid)
+     }
+ 
+     if (!tk_pid->tk->eng->proj->wmark_set) {
+-        set_swapcache_wmark(tk_pid, pid_str);
++        if (set_swapcache_wmark(tk_pid, pid_str) != 0) {
++            etmemd_log(ETMEMD_LOG_ERR, "set_swapcache_wmark for pid %u fail\n", tk_pid->pid);
++            return -1;
++        }
+         tk_pid->tk->eng->proj->wmark_set = true;
+     }
+ 
+diff --git a/etmem/src/etmemd_src/etmemd_scan.c b/etmem/src/etmemd_src/etmemd_scan.c
+index a1f8cdc..e06ba92 100644
+--- a/etmem/src/etmemd_src/etmemd_scan.c
++++ b/etmem/src/etmemd_src/etmemd_scan.c
+@@ -672,7 +672,8 @@ struct page_refs **walk_vmas(int fd,
+ * this parameter is used only in the dynamic engine to calculate the swap-in rate.
+ * In other policies, NULL can be directly transmitted.
+ * */
+-int get_page_refs(const struct vmas *vmas, const char *pid, struct page_refs **page_refs, unsigned long *use_rss, int flags)
++int get_page_refs(const struct vmas *vmas, const char *pid, struct page_refs **page_refs,
++                  unsigned long *use_rss, struct ioctl_para *ioctl_para)
+ {
+     u_int64_t i;
+     FILE *scan_fp = NULL;
+@@ -680,10 +681,6 @@ int get_page_refs(const struct vmas *vmas, const char *pid, struct page_refs **p
+     struct vma *vma = vmas->vma_list;
+     struct page_refs **tmp_page_refs = NULL;
+     struct walk_address walk_address = {0, 0, 0};
+-    struct ioctl_para ioctl_para = {
+-        .ioctl_cmd = IDLE_SCAN_ADD_FLAGS,
+-        .ioctl_parameter = flags,
+-    };
+ 
+     scan_fp = etmemd_get_proc_file(pid, IDLE_SCAN_FILE, "r");
+     if (scan_fp == NULL) {
+@@ -691,7 +688,8 @@ int get_page_refs(const struct vmas *vmas, const char *pid, struct page_refs **p
+         return -1;
+     }
+ 
+-    if (flags != 0 && etmemd_send_ioctl_cmd(scan_fp, &ioctl_para) != 0) {
++    if (ioctl_para != NULL && ioctl_para->ioctl_parameter != 0
++            && etmemd_send_ioctl_cmd(scan_fp, ioctl_para) != 0) {
+         fclose(scan_fp);
+         etmemd_log(ETMEMD_LOG_ERR, "etmemd_send_ioctl_cmd %s file for pid %s fail\n", IDLE_SCAN_FILE, pid);
+         return -1;
+@@ -734,6 +732,7 @@ int get_page_refs(const struct vmas *vmas, const char *pid, struct page_refs **p
+ 
+ int etmemd_get_page_refs(const struct vmas *vmas, const char *pid, struct page_refs **page_refs, int flags)
+ {
++    struct ioctl_para ioctl_para;
+     if (!g_exp_scan_inited) {
+         etmemd_log(ETMEMD_LOG_ERR, "scan module is not inited before etmemd_get_page_refs\n");
+         return -1;
+@@ -744,7 +743,10 @@ int etmemd_get_page_refs(const struct vmas *vmas, const char *pid, struct page_r
+         return -1;
+     }
+ 
+-    return get_page_refs(vmas, pid, page_refs, NULL, flags & ALL_SCAN_FLAGS);
++    ioctl_para.ioctl_parameter = flags & ALL_SCAN_FLAGS;
++    ioctl_para.ioctl_cmd = IDLE_SCAN_ADD_FLAGS;
++
++    return get_page_refs(vmas, pid, page_refs, NULL, &ioctl_para);
+ }
+ 
+ void etmemd_free_page_refs(struct page_refs *pf)
+@@ -765,6 +767,7 @@ struct page_refs *etmemd_do_scan(const struct task_pid *tpid, const struct task
+     struct page_refs *page_refs = NULL;
+     int ret;
+     char pid[PID_STR_MAX_LEN] = {0};
++    struct ioctl_para ioctl_para = {0};
+ 
+     if (tk == NULL) {
+         etmemd_log(ETMEMD_LOG_ERR, "task struct is null for pid %u\n", tpid->pid);
+@@ -785,9 +788,14 @@ struct page_refs *etmemd_do_scan(const struct task_pid *tpid, const struct task
+         return NULL;
+     }
+ 
++    ioctl_para.ioctl_cmd = VMA_SCAN_ADD_FLAGS;
++    if (tk->swap_flag != 0) {
++        ioctl_para.ioctl_parameter = VMA_SCAN_FLAG;
++    }
++
+     /* loop for scanning idle_pages to get result of memory access. */
+     for (i = 0; i < page_scan->loop; i++) {
+-        ret = get_page_refs(vmas, pid, &page_refs, NULL, 0);
++        ret = get_page_refs(vmas, pid, &page_refs, NULL, &ioctl_para);
+         if (ret != 0) {
+             etmemd_log(ETMEMD_LOG_ERR, "scan operation failed\n");
+             /* free page_refs nodes already exist */
+diff --git a/etmem/src/etmemd_src/etmemd_slide.c b/etmem/src/etmemd_src/etmemd_slide.c
+index c478fbd..236778a 100644
+--- a/etmem/src/etmemd_src/etmemd_slide.c
++++ b/etmem/src/etmemd_src/etmemd_slide.c
+@@ -185,7 +185,7 @@ static int check_pidmem_lower_threshold(struct task_pid *tk_pid)
+         return check_pid_should_swap(pid_str, vmrss, tk_pid);
+     }
+ 
+-    if ((int)vmrss > params->swap_threshold) {
++    if (vmrss > params->swap_threshold) {
+         return DO_SWAP;
+     }
+ 
+@@ -305,16 +305,16 @@ static int fill_task_swap_threshold(void *obj, void *val)
+ {
+     struct slide_params *params = (struct slide_params *)obj;
+     char *swap_threshold_string = (char *)val;
+-    int swap_threshold = get_swap_threshold_inKB(swap_threshold_string);
++    unsigned long swap_threshold;
+ 
+-    free(swap_threshold_string);
+-
+-    if (swap_threshold < 0) {
++    if (get_swap_threshold_inKB(swap_threshold_string, &swap_threshold) != 0) {
+         etmemd_log(ETMEMD_LOG_WARN,
+                    "parse swap_threshold failed.\n");
++        free(swap_threshold_string);
+         return -1;
+     }
+-
++   
++    free(swap_threshold_string);
+     params->swap_threshold = swap_threshold;
+ 
+     return 0;
+diff --git a/etmem/src/etmemd_src/etmemd_task.c b/etmem/src/etmemd_src/etmemd_task.c
+index 618245e..2a8cb3e 100644
+--- a/etmem/src/etmemd_src/etmemd_task.c
++++ b/etmem/src/etmemd_src/etmemd_task.c
+@@ -470,10 +470,33 @@ static int fill_task_threads(void *obj, void *val)
+     return 0;
+ }
+ 
++static int fill_task_swap_flag(void *obj, void *val)
++{
++    struct task *tk = (struct task *)obj;
++    char *swap_flag = (char *)val;
++
++    if (strcmp(swap_flag, "yes") == 0) {
++        tk->swap_flag = 1;
++        free(val);
++        return 0;
++    }
++
++    if (strcmp(swap_flag, "no") == 0) {
++        tk->swap_flag = 0;
++        free(val);
++        return 0;
++    }
++
++    free(val);
++    etmemd_log(ETMEMD_LOG_ERR, "swap_flag para is not valid.\n");
++    return -1;
++}
++
+ struct config_item g_task_config_items[] = {
+     {"name", STR_VAL, fill_task_name, false},
+     {"type", STR_VAL, fill_task_type, false},
+     {"value", STR_VAL, fill_task_value, false},
++    {"swap_flag", STR_VAL, fill_task_swap_flag, true},
+     {"max_threads", INT_VAL, fill_task_threads, true},
+ };
+ 
+-- 
+1.8.3.1
+

@@ -1,0 +1,87 @@
+From ececb8bc648391dd4ea536982d70fd7fa1984a0c Mon Sep 17 00:00:00 2001
+From: Kemeng Shi <shikemeng@huawei.com>
+Date: Fri, 13 May 2022 15:30:04 +0800
+Subject: [PATCH 26/33] cslide: limit hot_threshold range to avoid overflow and
+ fix some memleak
+
+Signed-off-by: Kemeng Shi <shikemeng@huawei.com>
+---
+ etmem/inc/etmemd_inc/etmemd_scan.h    | 1 +
+ etmem/src/etmemd_src/etmemd_cslide.c  | 9 +++++++--
+ etmem/src/etmemd_src/etmemd_project.c | 1 +
+ etmem/src/etmemd_src/etmemd_task.c    | 1 +
+ 4 files changed, 10 insertions(+), 2 deletions(-)
+
+diff --git a/etmem/inc/etmemd_inc/etmemd_scan.h b/etmem/inc/etmemd_inc/etmemd_scan.h
+index 7c25152..47d710f 100644
+--- a/etmem/inc/etmemd_inc/etmemd_scan.h
++++ b/etmem/inc/etmemd_inc/etmemd_scan.h
+@@ -59,6 +59,7 @@ enum access_type_weight {
+     IDLE_TYPE_WEIGHT = 0,
+     READ_TYPE_WEIGHT = 1,
+     WRITE_TYPE_WEIGHT = 3,
++    MAX_ACCESS_WEIGHT = WRITE_TYPE_WEIGHT,
+ };
+ 
+ struct walk_address {
+diff --git a/etmem/src/etmemd_src/etmemd_cslide.c b/etmem/src/etmemd_src/etmemd_cslide.c
+index cbaa2e8..92e1aff 100644
+--- a/etmem/src/etmemd_src/etmemd_cslide.c
++++ b/etmem/src/etmemd_src/etmemd_cslide.c
+@@ -566,7 +566,7 @@ static struct cslide_pid_params *alloc_pid_params(struct cslide_eng_params *eng_
+ {
+     int i;
+     struct cslide_pid_params *params = calloc(1, sizeof(struct cslide_pid_params));
+-    int count = eng_params->loop;
++    int count = eng_params->loop * MAX_ACCESS_WEIGHT;
+     int pair_num = eng_params->node_map.cur_num;
+     int node_num = eng_params->mem.node_num;
+ 
+@@ -1156,7 +1156,7 @@ static void move_hot_pages(struct cslide_eng_params *eng_params, struct flow_ctr
+     filter.flow_enough = is_hot_enough;
+     filter.filter_policy = to_hot_policy;
+     filter.ctrl = ctrl;
+-    filter.count_start = eng_params->loop;
++    filter.count_start = eng_params->loop * MAX_ACCESS_WEIGHT;
+     filter.count_end = eng_params->hot_threshold - 1;
+     filter.count_step = -1;
+     do_filter(&filter, eng_params);
+@@ -2028,6 +2028,11 @@ static int fill_hot_threshold(void *obj, void *val)
+         return -1;
+     }
+ 
++    if (t > params->loop * MAX_ACCESS_WEIGHT + 1) {
++        // limit hot_threshold to avoid overflow in do_filter
++        t = params->loop * MAX_ACCESS_WEIGHT + 1;
++    }
++
+     params->hot_threshold = t;
+     return 0;
+ }
+diff --git a/etmem/src/etmemd_src/etmemd_project.c b/etmem/src/etmemd_src/etmemd_project.c
+index e238e66..5213bbd 100644
+--- a/etmem/src/etmemd_src/etmemd_project.c
++++ b/etmem/src/etmemd_src/etmemd_project.c
+@@ -729,6 +729,7 @@ static int project_fill_by_conf(GKeyFile *config, struct project *proj)
+     if (!check_swapcache_wmark_valid(proj)) {
+         etmemd_log(ETMEMD_LOG_ERR, "swapcache wmark is not valid, low wmark: %d, high wmark: %d",
+                     proj->swapcache_low_wmark, proj->swapcache_high_wmark);
++        clear_project(proj);
+         return -1;
+     }
+     return 0;
+diff --git a/etmem/src/etmemd_src/etmemd_task.c b/etmem/src/etmemd_src/etmemd_task.c
+index 2a8cb3e..649d48e 100644
+--- a/etmem/src/etmemd_src/etmemd_task.c
++++ b/etmem/src/etmemd_src/etmemd_task.c
+@@ -428,6 +428,7 @@ static int fill_task_type(void *obj, void *val)
+     char *type = (char *)val;
+     if (strcmp(val, "pid") != 0 && strcmp(val, "name") != 0) {
+         etmemd_log(ETMEMD_LOG_ERR, "invalid task type, must be pid or name.\n");
++        free(val);
+         return -1;
+     }
+ 
+-- 
+1.8.3.1
+
