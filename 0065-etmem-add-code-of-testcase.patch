@@ -1,0 +1,682 @@
+From 9018988c20ce1ee49d2d4458d85b72993ee39283 Mon Sep 17 00:00:00 2001
+From: liubo <liubo254@huawei.com>
+Date: Mon, 24 Jan 2022 03:02:41 +0800
+Subject: [PATCH 15/33] etmem: add code of testcase
+
+add code of testcase for etmem migrate functions
+add testcase to etmem project function
+
+Signed-off-by: liubo <liubo254@huawei.com>
+---
+ etmem/test/common/test_common.c                    |  33 ++-
+ etmem/test/common/test_common.h                    |  72 ++++---
+ etmem/test/etmem_migrate_ops_llt/CMakeLists.txt    |  27 +++
+ .../etmem_migrate_ops_llt/etmem_migrate_ops_llt.c  | 226 +++++++++++++++++++++
+ .../etmem_project_ops_llt.c                        | 161 ++++++++++++++-
+ .../etmem_scan_ops_llt_test/etmem_scan_ops_llt.c   |   4 +-
+ 6 files changed, 484 insertions(+), 39 deletions(-)
+ create mode 100644 etmem/test/etmem_migrate_ops_llt/CMakeLists.txt
+ create mode 100644 etmem/test/etmem_migrate_ops_llt/etmem_migrate_ops_llt.c
+
+diff --git a/etmem/test/common/test_common.c b/etmem/test/common/test_common.c
+index 4551177..4bd3fc3 100644
+--- a/etmem/test/common/test_common.c
++++ b/etmem/test/common/test_common.c
+@@ -63,6 +63,18 @@ void construct_proj_file(struct proj_test_param *param)
+     if (param->sleep != NULL) {
+         CU_ASSERT_NOT_EQUAL(fprintf(file, CONFIG_SLEEP, param->sleep), -1);
+     }
++    if (param->sysmem_threshold != NULL) {
++        CU_ASSERT_NOT_EQUAL(fprintf(file, CONFIG_SYSMEM_THRESHOLD,
++                                    param->sysmem_threshold), -1);
++    }
++    if (param->swapcache_high_wmark != NULL) {
++        CU_ASSERT_NOT_EQUAL(fprintf(file, CONFIG_SWAPCACHE_HIGH_WMARK,
++                                    param->swapcache_high_wmark), -1);
++    }
++    if (param->swapcache_low_wmark != NULL) {
++        CU_ASSERT_NOT_EQUAL(fprintf(file, CONFIG_SWAPCACHE_LOW_WMARK,
++                                    param->swapcache_low_wmark), -1);
++    }
+     fclose(file);
+ }
+ 
+@@ -83,12 +95,15 @@ void init_proj_param(struct proj_test_param *param)
+     param->sleep = "1";
+     param->interval = "1";
+     param->loop = "1";
++    param->sysmem_threshold = NULL;
++    param->swapcache_high_wmark = NULL;
++    param->swapcache_low_wmark = NULL;
+     param->file_name = TMP_PROJ_CONFIG;
+     param->proj_name = DEFAULT_PROJ;
+     param->expt = OPT_SUCCESS;
+ }
+ 
+-void do_add_proj_test(struct proj_test_param * param)
++void do_add_proj_test(struct proj_test_param *param)
+ {
+     GKeyFile *config = NULL;
+ 
+@@ -155,16 +170,16 @@ void construct_task_file(struct task_test_param *param)
+         CU_ASSERT_NOT_EQUAL(fprintf(file, CONFIG_NAME, param->name), -1);
+     }
+     if (param->proj != NULL) {
+-        CU_ASSERT_NOT_EQUAL(fprintf(file, CONFIG_PROJ, param->name), -1);
++        CU_ASSERT_NOT_EQUAL(fprintf(file, CONFIG_PROJ, param->proj), -1);
+     }
+     if (param->eng != NULL) {
+-        CU_ASSERT_NOT_EQUAL(fprintf(file, CONFIG_ENG, param->name), -1);
++        CU_ASSERT_NOT_EQUAL(fprintf(file, CONFIG_ENG, param->eng), -1);
+     }
+     if (param->type != NULL) {
+-        CU_ASSERT_NOT_EQUAL(fprintf(file, CONFIG_TYPE, param->name), -1);
++        CU_ASSERT_NOT_EQUAL(fprintf(file, CONFIG_TYPE, param->type), -1);
+     }
+     if (param->value != NULL) {
+-        CU_ASSERT_NOT_EQUAL(fprintf(file, CONFIG_VALUE, param->name), -1);
++        CU_ASSERT_NOT_EQUAL(fprintf(file, CONFIG_VALUE, param->value), -1);
+     }
+     fclose(file);
+ }
+@@ -174,6 +189,8 @@ void init_slide_task(struct slide_task_test_param *param)
+     init_task_param(&param->task_param, "slide");
+     param->max_threads = "1";
+     param->T = "1";
++    param->swap_flag = NULL;
++    param->swap_threshold = NULL;
+ }
+ 
+ void add_slide_task(struct slide_task_test_param *param)
+@@ -189,6 +206,12 @@ void add_slide_task(struct slide_task_test_param *param)
+     if (param->T != NULL) {
+         CU_ASSERT_NOT_EQUAL(fprintf(file, CONFIG_T, param->T), -1);
+     }
++    if (param->swap_flag != NULL) {
++        CU_ASSERT_NOT_EQUAL(fprintf(file, CONFIG_SWAP_FLAG, param->swap_flag), -1);
++    }
++    if (param->swap_threshold != NULL) {
++        CU_ASSERT_NOT_EQUAL(fprintf(file, CONFIG_SWAP_THRESHOLD, param->swap_threshold), -1);
++    }
+     fclose(file);
+ }
+ 
+diff --git a/etmem/test/common/test_common.h b/etmem/test/common/test_common.h
+index 009c458..1ba20c7 100644
+--- a/etmem/test/common/test_common.h
++++ b/etmem/test/common/test_common.h
+@@ -20,43 +20,51 @@
+ 
+ #include "etmemd_project.h"
+ 
+-#define CONFIG_NAME "name=%s\n"
+-#define CONFIG_INTERVAL "interval=%s\n"
+-#define CONFIG_LOOP "loop=%s\n"
+-#define CONFIG_SLEEP "sleep=%s\n"
+-#define TMP_PROJ_CONFIG "proj_tmp.config"
+-#define DEFAULT_PROJ "default_proj"
+-
+-#define CONFIG_PROJ "project=%s\n"
+-#define TMP_ENG_CONFIG "eng_tmp.config"
+-
+-#define CONFIG_ENG "engine=%s\n"
+-#define CONFIG_TYPE "type=%s\n"
+-#define CONFIG_VALUE "value=%s\n"
+-#define TMP_TASK_CONFIG "task_tmp.config"
+-#define DEFAULT_TASK "default_task"
+-
+-#define CONFIG_MAX_THREADS "max_threads=%s\n"
+-#define CONFIG_T "T=%s\n"
+-
+-#define CONFIG_NODE_PAIR "node_pair=%s\n"
+-#define CONFIG_THRESH "hot_threshold=%s\n"
+-#define CONFIG_QUOTA "node_mig_quota=%s\n"
+-#define CONFIG_RESV "node_hot_reserve=%s\n"
+-
+-#define CONFIG_VM_FLAGS "vm_flags=%s\n"
+-#define CONFIG_ANON_ONLY "anon_only=%s\n"
+-#define CONFIG_IGN_HOST "igno_host=%s\n"
+-
+-#define ONE_NODE_PAIR 2
+-#define TWO_NODE_PAIR 4
+-#define THREE_NODE_PAIR 5
++#define CONFIG_NAME                         "name=%s\n"
++#define CONFIG_INTERVAL                     "interval=%s\n"
++#define CONFIG_LOOP                         "loop=%s\n"
++#define CONFIG_SLEEP                        "sleep=%s\n"
++#define CONFIG_SYSMEM_THRESHOLD             "sysmem_threshold=%s\n"
++#define CONFIG_SWAPCACHE_HIGH_WMARK         "swapcache_high_wmark=%s\n"
++#define CONFIG_SWAPCACHE_LOW_WMARK          "swapcache_low_wmark=%s\n"
++#define TMP_PROJ_CONFIG                     "proj_tmp.config"
++#define DEFAULT_PROJ                        "default_proj"
++
++#define CONFIG_PROJ                         "project=%s\n"
++#define TMP_ENG_CONFIG                      "eng_tmp.config"
++
++#define CONFIG_ENG                          "engine=%s\n"
++#define CONFIG_TYPE                         "type=%s\n"
++#define CONFIG_VALUE                        "value=%s\n"
++#define TMP_TASK_CONFIG                     "task_tmp.config"
++#define DEFAULT_TASK                        "default_task"
++
++#define CONFIG_MAX_THREADS                  "max_threads=%s\n"
++#define CONFIG_T                            "T=%s\n"
++#define CONFIG_SWAP_FLAG                    "swap_flag=%s\n"
++#define CONFIG_SWAP_THRESHOLD               "swap_threshold=%s\n"
++
++#define CONFIG_NODE_PAIR                    "node_pair=%s\n"
++#define CONFIG_THRESH                       "hot_threshold=%s\n"
++#define CONFIG_QUOTA                        "node_mig_quota=%s\n"
++#define CONFIG_RESV                         "node_hot_reserve=%s\n"
++
++#define CONFIG_VM_FLAGS                     "vm_flags=%s\n"
++#define CONFIG_ANON_ONLY                    "anon_only=%s\n"
++#define CONFIG_IGN_HOST                     "ign_host=%s\n"
++
++#define ONE_NODE_PAIR                       2
++#define TWO_NODE_PAIR                       4
++#define THREE_NODE_PAIR                     6
+ 
+ 
+ struct proj_test_param {
+     const char *sleep;
+     const char *interval;
+     const char *loop;
++    const char *sysmem_threshold;
++    const char *swapcache_high_wmark;
++    const char *swapcache_low_wmark;
+     const char *proj_name;
+     const char *file_name;
+     enum opt_result expt;
+@@ -81,6 +89,8 @@ struct slide_task_test_param {
+     struct task_test_param task_param;
+     const char *max_threads;
+     const char *T;
++    const char *swap_flag;
++    const char *swap_threshold;
+ };
+ 
+ struct cslide_eng_test_param {
+diff --git a/etmem/test/etmem_migrate_ops_llt/CMakeLists.txt b/etmem/test/etmem_migrate_ops_llt/CMakeLists.txt
+new file mode 100644
+index 0000000..a9487af
+--- /dev/null
++++ b/etmem/test/etmem_migrate_ops_llt/CMakeLists.txt
+@@ -0,0 +1,27 @@
++# /******************************************************************************
++#  * Copyright (c) Huawei Technologies Co., Ltd. 2019-2021. All rights reserved.
++#  * etmem is licensed under the Mulan PSL v2.
++#  * You can use this software according to the terms and conditions of the Mulan PSL v2.
++#  * You may obtain a copy of Mulan PSL v2 at:
++#  *     http://license.coscl.org.cn/MulanPSL2
++#  * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR
++#  * IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY OR FIT FOR A PARTICULAR
++#  * PURPOSE.
++#  * See the Mulan PSL v2 for more details.
++#  * Author: liubo
++#  * Create: 2021-12-10
++#  * Description: CMakefileList for etmem_migrate_ops_llt to compile
++#  ******************************************************************************/
++
++project(etmem)
++
++INCLUDE_DIRECTORIES(../../inc/etmem_inc)
++INCLUDE_DIRECTORIES(../../inc/etmemd_inc)
++INCLUDE_DIRECTORIES(${GLIB2_INCLUDE_DIRS})
++
++SET(EXE etmem_migrate_ops_llt)
++
++add_executable(${EXE} etmem_migrate_ops_llt.c)
++
++set_target_properties(${EXE} PROPERTIES LINK_FLAGS "-Wl,--wrap,get_mem_from_proc_file")
++target_link_libraries(${EXE} cunit ${BUILD_DIR}/lib/libetmemd.so pthread dl rt boundscheck numa ${GLIB2_LIBRARIES})
+diff --git a/etmem/test/etmem_migrate_ops_llt/etmem_migrate_ops_llt.c b/etmem/test/etmem_migrate_ops_llt/etmem_migrate_ops_llt.c
+new file mode 100644
+index 0000000..2758680
+--- /dev/null
++++ b/etmem/test/etmem_migrate_ops_llt/etmem_migrate_ops_llt.c
+@@ -0,0 +1,226 @@
++/******************************************************************************
++ * Copyright (c) Huawei Technologies Co., Ltd. 2019-2021. All rights reserved.
++ * etmem is licensed under the Mulan PSL v2.
++ * You can use this software according to the terms and conditions of the Mulan PSL v2.
++ * You may obtain a copy of Mulan PSL v2 at:
++ * http://license.coscl.org.cn/MulanPSL2
++ * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR
++ * IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY OR FIT FOR A PARTICULAR
++ * PURPOSE.
++ * See the Mulan PSL v2 for more details.
++ * Author: liubo
++ * Create: 2021-08-14
++ * Description: This is a source file of the unit test for log functions in etmem.
++ ******************************************************************************/
++
++#include <sys/file.h>
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++
++#include "etmemd.h"
++#include "etmemd_migrate.h"
++#include "etmemd_scan.h"
++#include "etmemd_project_exp.h"
++#include "etmemd_engine_exp.h"
++#include "etmemd_task_exp.h"
++#include "etmemd_task.h"
++
++#include <CUnit/Basic.h>
++#include <CUnit/Automated.h>
++#include <CUnit/Console.h>
++
++#define WATER_LINE_TEMP 2
++
++/* Function replacement used for mock test. This function is used only in dt. */
++int get_mem_from_proc_file(const char *pid, const char *file_name,
++                           unsigned long *data, const char *cmpstr)
++{
++    *data = 100;
++    return 0;
++}
++
++void init_task_pid_param(struct task_pid *param)
++{
++    param->pid = 1;
++    param->rt_swapin_rate = 0.0;
++    param->params = NULL;
++    param->next = NULL;
++}
++
++static struct memory_grade *get_memory_grade(void)
++{
++    struct memory_grade *memory_grade = NULL;
++    struct vmas *vmas = NULL;
++    struct page_refs *page_refs = NULL;
++    const char *pid = "1";
++
++    init_g_page_size();
++    vmas = get_vmas(pid);
++    CU_ASSERT_PTR_NOT_NULL(vmas);
++    CU_ASSERT_EQUAL(get_page_refs(vmas, pid, &page_refs, NULL, NULL), 0);
++    free(vmas);
++    vmas = NULL;
++
++    memory_grade = (struct memory_grade *)calloc(1, sizeof(struct memory_grade));
++    CU_ASSERT_PTR_NOT_NULL(memory_grade);
++
++    while (page_refs != NULL)
++    {
++        if ((page_refs)->count >= WATER_LINE_TEMP) {
++            page_refs = add_page_refs_into_memory_grade(page_refs, &memory_grade->hot_pages);
++            continue;
++        }
++        page_refs = add_page_refs_into_memory_grade(page_refs, &memory_grade->cold_pages);
++    }
++
++    return memory_grade;
++}
++
++static void test_etmem_migrate_error(void)
++{
++    struct memory_grade *memory_grade = NULL;
++
++    memory_grade = (struct memory_grade *)calloc(1, sizeof(struct memory_grade));
++    CU_ASSERT_PTR_NOT_NULL(memory_grade);
++
++    CU_ASSERT_EQUAL(etmemd_grade_migrate("", memory_grade), 0);
++    CU_ASSERT_EQUAL(etmemd_grade_migrate("no123", memory_grade), 0);
++
++    free(memory_grade);
++
++    memory_grade = get_memory_grade();
++    CU_ASSERT_PTR_NOT_NULL(memory_grade);
++    CU_ASSERT_EQUAL(etmemd_grade_migrate("", memory_grade), -1);
++    CU_ASSERT_EQUAL(etmemd_grade_migrate("no123", memory_grade), -1);
++
++    clean_memory_grade_unexpected(&memory_grade);
++    CU_ASSERT_PTR_NULL(memory_grade);
++}
++
++static void test_etmem_migrate_ok(void)
++{
++    struct memory_grade *memory_grade = NULL;
++
++    memory_grade = get_memory_grade();
++    CU_ASSERT_PTR_NOT_NULL(memory_grade);
++    CU_ASSERT_EQUAL(etmemd_grade_migrate("1", memory_grade), -1);
++
++    clean_memory_grade_unexpected(&memory_grade);
++    CU_ASSERT_PTR_NULL(memory_grade);
++}
++
++static void test_etmemd_reclaim_swapcache_error(void)
++{
++    struct project proj = {0};
++    struct engine eng = {0};
++    struct task tk = {0};
++    struct task_pid tk_pid = {0};
++
++    proj.swapcache_high_wmark = 5;
++    proj.swapcache_low_wmark = 3;
++    tk_pid.tk = &tk;
++    tk.eng = &eng;
++    eng.proj = &proj;
++
++    CU_ASSERT_EQUAL(etmemd_reclaim_swapcache(NULL), -1);
++
++    init_task_pid_param(&tk_pid);
++    tk_pid.pid = 0;
++    proj.wmark_set = false;
++    CU_ASSERT_EQUAL(etmemd_reclaim_swapcache(&tk_pid), -1);
++
++    tk_pid.pid = 0;
++    proj.wmark_set = true;
++    CU_ASSERT_EQUAL(etmemd_reclaim_swapcache(&tk_pid), -1);
++}
++
++static void test_etmemd_reclaim_swapcache_ok(void)
++{
++    struct project proj = {0};
++    struct engine eng = {0};
++    struct task tk = {0};
++    struct task_pid tk_pid = {0};
++
++    tk_pid.tk = &tk;
++    tk.eng = &eng;
++    eng.proj = &proj;
++
++    init_task_pid_param(&tk_pid);
++    proj.swapcache_high_wmark = -1;
++    proj.swapcache_low_wmark = -1;
++    CU_ASSERT_EQUAL(etmemd_reclaim_swapcache(&tk_pid), 0);
++
++    proj.swapcache_high_wmark = 100;
++    proj.swapcache_low_wmark = 3;
++    CU_ASSERT_EQUAL(etmemd_reclaim_swapcache(&tk_pid), 0);
++
++    init_task_pid_param(&tk_pid);
++    proj.swapcache_high_wmark = 5;
++    proj.swapcache_low_wmark = 3;
++    proj.wmark_set = false;
++    CU_ASSERT_EQUAL(etmemd_reclaim_swapcache(&tk_pid), 0);
++}
++
++typedef enum {
++    CUNIT_SCREEN = 0,
++    CUNIT_XMLFILE,
++    CUNIT_CONSOLE
++} cu_run_mode;
++
++int main(int argc, const char **argv)
++{
++    CU_pSuite suite;
++    CU_pTest pTest;
++    unsigned int num_failures;
++    cu_run_mode cunit_mode = CUNIT_SCREEN;
++    int error_num;
++
++    if (argc > 1) {
++        cunit_mode = atoi(argv[1]);
++    }
++
++    if (CU_initialize_registry() != CUE_SUCCESS) {
++        return -CU_get_error();
++    }
++
++    suite = CU_add_suite("etmem_migrate_ops", NULL, NULL);
++    if (suite == NULL) {
++        goto ERROR;
++    }
++
++    if (CU_ADD_TEST(suite, test_etmem_migrate_error) == NULL ||
++        CU_ADD_TEST(suite, test_etmem_migrate_ok) == NULL ||
++        CU_ADD_TEST(suite, test_etmemd_reclaim_swapcache_error) == NULL ||
++        CU_ADD_TEST(suite, test_etmemd_reclaim_swapcache_ok) == NULL) {
++            printf("CU_ADD_TEST fail. \n");
++            goto ERROR;
++    }
++
++    switch (cunit_mode) {
++        case CUNIT_SCREEN:
++            CU_basic_set_mode(CU_BRM_VERBOSE);
++            CU_basic_run_tests();
++            break;
++        case CUNIT_XMLFILE:
++            CU_set_output_filename("etmemd_migrate.c");
++            CU_automated_run_tests();
++            break;
++        case CUNIT_CONSOLE:
++            CU_console_run_tests();
++            break;
++        default:
++            printf("not support cunit mode, only support: "
++                   "0 for CUNIT_SCREEN, 1 for CUNIT_XMLFILE, 2 for CUNIT_CONSOLE\n");
++            goto ERROR;
++    }
++
++    num_failures = CU_get_number_of_failures();
++    CU_cleanup_registry();
++    return num_failures;
++
++ERROR:
++    error_num = CU_get_error();
++    CU_cleanup_registry();
++    return -error_num;
++}
+diff --git a/etmem/test/etmem_project_ops_llt_test/etmem_project_ops_llt.c b/etmem/test/etmem_project_ops_llt_test/etmem_project_ops_llt.c
+index a01e8e8..65c1fc6 100644
+--- a/etmem/test/etmem_project_ops_llt_test/etmem_project_ops_llt.c
++++ b/etmem/test/etmem_project_ops_llt_test/etmem_project_ops_llt.c
+@@ -117,6 +117,161 @@ static void etmem_pro_add_interval(void)
+     destroy_proj_config(config);
+ }
+ 
++static void etmem_pro_add_sysmem_threshold_error(void)
++{
++    struct proj_test_param param;
++    GKeyFile *config = NULL;
++
++    init_proj_param(&param);
++
++    param.sysmem_threshold = "101";
++    config = construct_proj_config(&param);
++    CU_ASSERT_EQUAL(etmemd_project_add(config), OPT_INVAL);
++    destroy_proj_config(config);
++
++    param.sysmem_threshold = "abc";
++    config = construct_proj_config(&param);
++    CU_ASSERT_EQUAL(etmemd_project_add(config), OPT_INVAL);
++    destroy_proj_config(config);
++
++    param.sysmem_threshold = "a10b";
++    config = construct_proj_config(&param);
++    CU_ASSERT_EQUAL(etmemd_project_add(config), OPT_INVAL);
++    destroy_proj_config(config);
++
++    param.sysmem_threshold = "10a";
++    config = construct_proj_config(&param);
++    CU_ASSERT_EQUAL(etmemd_project_add(config), OPT_INVAL);
++    destroy_proj_config(config);
++
++    param.sysmem_threshold = "-1";
++    config = construct_proj_config(&param);
++    CU_ASSERT_EQUAL(etmemd_project_add(config), OPT_INVAL);
++    destroy_proj_config(config);
++}
++
++static void etmem_pro_add_sysmem_threshold_ok(void)
++{
++    struct proj_test_param param;
++    GKeyFile *config = NULL;
++
++    init_proj_param(&param);
++
++    param.sysmem_threshold = "0";
++    config = construct_proj_config(&param);
++    CU_ASSERT_EQUAL(etmemd_project_add(config), OPT_SUCCESS);
++    CU_ASSERT_EQUAL(etmemd_project_remove(config), OPT_SUCCESS);
++    destroy_proj_config(config);
++
++    param.sysmem_threshold = "1";
++    config = construct_proj_config(&param);
++    CU_ASSERT_EQUAL(etmemd_project_add(config), OPT_SUCCESS);
++    CU_ASSERT_EQUAL(etmemd_project_remove(config), OPT_SUCCESS);
++    destroy_proj_config(config);
++
++    param.sysmem_threshold = "2";
++    config = construct_proj_config(&param);
++    CU_ASSERT_EQUAL(etmemd_project_add(config), OPT_SUCCESS);
++    CU_ASSERT_EQUAL(etmemd_project_remove(config), OPT_SUCCESS);
++    destroy_proj_config(config);
++
++    param.sysmem_threshold = "99";
++    config = construct_proj_config(&param);
++    CU_ASSERT_EQUAL(etmemd_project_add(config), OPT_SUCCESS);
++    CU_ASSERT_EQUAL(etmemd_project_remove(config), OPT_SUCCESS);
++    destroy_proj_config(config);
++
++    param.sysmem_threshold = "100";
++    config = construct_proj_config(&param);
++    CU_ASSERT_EQUAL(etmemd_project_add(config), OPT_SUCCESS);
++    CU_ASSERT_EQUAL(etmemd_project_remove(config), OPT_SUCCESS);
++    destroy_proj_config(config);
++}
++
++static void etmem_pro_add_swapcache_mark_error(void)
++{
++    struct proj_test_param param;
++    GKeyFile *config = NULL;
++
++    init_proj_param(&param);
++
++    param.swapcache_high_wmark = "-1";
++    param.swapcache_low_wmark = "-1";
++    config = construct_proj_config(&param);
++    CU_ASSERT_EQUAL(etmemd_project_add(config), OPT_INVAL);
++    destroy_proj_config(config);
++
++    param.swapcache_high_wmark = "1";
++    param.swapcache_low_wmark = "-1";
++    config = construct_proj_config(&param);
++    CU_ASSERT_EQUAL(etmemd_project_add(config), OPT_INVAL);
++    destroy_proj_config(config);
++
++    param.swapcache_high_wmark = "-1";
++    param.swapcache_low_wmark = "1";
++    config = construct_proj_config(&param);
++    CU_ASSERT_EQUAL(etmemd_project_add(config), OPT_INVAL);
++    destroy_proj_config(config);
++
++    param.swapcache_high_wmark = "1";
++    param.swapcache_low_wmark = "2";
++    config = construct_proj_config(&param);
++    CU_ASSERT_EQUAL(etmemd_project_add(config), OPT_INVAL);
++    destroy_proj_config(config);
++
++    param.swapcache_high_wmark = "101";
++    param.swapcache_low_wmark = "100";
++    config = construct_proj_config(&param);
++    CU_ASSERT_EQUAL(etmemd_project_add(config), OPT_INVAL);
++    destroy_proj_config(config);
++
++    param.swapcache_high_wmark = "100";
++    param.swapcache_low_wmark = "101";
++    config = construct_proj_config(&param);
++    CU_ASSERT_EQUAL(etmemd_project_add(config), OPT_INVAL);
++    destroy_proj_config(config);
++
++    param.swapcache_high_wmark = "101";
++    param.swapcache_low_wmark = "101";
++    config = construct_proj_config(&param);
++    CU_ASSERT_EQUAL(etmemd_project_add(config), OPT_INVAL);
++    destroy_proj_config(config);
++
++    param.swapcache_high_wmark = "5";
++    param.swapcache_low_wmark = NULL;
++    config = construct_proj_config(&param);
++    CU_ASSERT_EQUAL(etmemd_project_add(config), OPT_INVAL);
++    destroy_proj_config(config);
++
++    param.swapcache_high_wmark = NULL;
++    param.swapcache_low_wmark = "5";
++    config = construct_proj_config(&param);
++    CU_ASSERT_EQUAL(etmemd_project_add(config), OPT_INVAL);
++    destroy_proj_config(config);
++}
++
++static void etmem_pro_add_swapcache_mark_ok(void)
++{
++    struct proj_test_param param;
++    GKeyFile *config = NULL;
++
++    init_proj_param(&param);
++
++    param.swapcache_high_wmark = "2";
++    param.swapcache_low_wmark = "1";
++    config = construct_proj_config(&param);
++    CU_ASSERT_EQUAL(etmemd_project_add(config), OPT_SUCCESS);
++    CU_ASSERT_EQUAL(etmemd_project_remove(config), OPT_SUCCESS);
++    destroy_proj_config(config);
++
++    param.swapcache_high_wmark = "100";
++    param.swapcache_low_wmark = "99";
++    config = construct_proj_config(&param);
++    CU_ASSERT_EQUAL(etmemd_project_add(config), OPT_SUCCESS);
++    CU_ASSERT_EQUAL(etmemd_project_remove(config), OPT_SUCCESS);
++    destroy_proj_config(config);
++}
++
+ static void etmem_pro_add_loop(void)
+ {
+     struct proj_test_param param;
+@@ -231,6 +386,8 @@ void test_etmem_prj_add_error(void)
+     etmem_pro_add_loop();
+     etmem_pro_add_sleep();
+     etmem_pro_lack_loop();
++    etmem_pro_add_sysmem_threshold_error();
++    etmem_pro_add_swapcache_mark_error();
+ }
+ 
+ void test_etmem_prj_del_error(void)
+@@ -256,6 +413,8 @@ static void add_project_once(void)
+     struct proj_test_param param;
+     GKeyFile *config = NULL;
+ 
++    etmem_pro_add_sysmem_threshold_ok();
++    etmem_pro_add_swapcache_mark_ok();
+     init_proj_param(&param);
+ 
+     CU_ASSERT_EQUAL(etmemd_project_show(NULL, 0), OPT_PRO_NOEXIST);
+@@ -348,7 +507,7 @@ void test_etmem_mig_stop_error(void)
+     CU_ASSERT_EQUAL(etmemd_migrate_stop(""), OPT_PRO_NOEXIST);
+     CU_ASSERT_EQUAL(etmemd_migrate_stop("ETMEM"), OPT_PRO_NOEXIST);
+     CU_ASSERT_EQUAL(etmemd_migrate_stop("ET^$%*MEM"), OPT_PRO_NOEXIST);
+- 
++
+     param.proj_name = "add_for_migrate_stop_test";
+     do_add_proj_test(&param);
+ 
+diff --git a/etmem/test/etmem_scan_ops_llt_test/etmem_scan_ops_llt.c b/etmem/test/etmem_scan_ops_llt_test/etmem_scan_ops_llt.c
+index 0cd2ecc..84fcf69 100644
+--- a/etmem/test/etmem_scan_ops_llt_test/etmem_scan_ops_llt.c
++++ b/etmem/test/etmem_scan_ops_llt_test/etmem_scan_ops_llt.c
+@@ -243,7 +243,7 @@ static void test_get_page_refs_valid()
+ 
+     unsigned long use_rss;
+ 
+-    CU_ASSERT_EQUAL(get_page_refs(vmas, pid, &page_refs, &use_rss, 0), 0);
++    CU_ASSERT_EQUAL(get_page_refs(vmas, pid, &page_refs, &use_rss, NULL), 0);
+     CU_ASSERT_PTR_NOT_NULL(page_refs);
+     CU_ASSERT_NOT_EQUAL(use_rss, 0);
+ 
+@@ -309,7 +309,7 @@ static void test_add_pg_to_mem_grade()
+     CU_ASSERT_EQUAL(etmemd_scan_init(), 0);
+ 
+     vma = get_vmas(pid);
+-    CU_ASSERT_EQUAL(get_page_refs(vma, pid, &page_refs, NULL, 0), 0);
++    CU_ASSERT_EQUAL(get_page_refs(vma, pid, &page_refs, NULL, NULL), 0);
+     page_refs = add_page_refs_into_memory_grade(page_refs, &list);
+     CU_ASSERT_PTR_NOT_NULL(page_refs);
+     CU_ASSERT_PTR_NOT_NULL(list);
+-- 
+1.8.3.1
+

@@ -1,0 +1,2375 @@
+From d20020488c2cd7acffad47a727a566c01aeae28a Mon Sep 17 00:00:00 2001
+From: liubo <liubo254@huawei.com>
+Date: Sat, 5 Mar 2022 13:40:32 +0800
+Subject: [PATCH 24/33] etmem: add code of testcase
+
+add code of testcase of etmem cslide functions.
+modify testcode in etmem common llt.
+
+Signed-off-by: liubo <liubo254@huawei.com>
+---
+ etmem/test/CMakeLists.txt                          |   18 +-
+ .../etmem_common_func_llt.c                        |  172 ++-
+ .../test/etmem_cslide_ops_llt_test/CMakeLists.txt  |   30 +
+ .../cslide_showpage_test.sh                        |  217 ++++
+ .../etmem_cslide_ops_llt.c                         | 1119 ++++++++++++++++++++
+ etmem/test/etmem_cslide_ops_llt_test/mem_access.c  |   90 ++
+ etmem/test/etmem_migrate_ops_llt/CMakeLists.txt    |   27 -
+ .../etmem_migrate_ops_llt/etmem_migrate_ops_llt.c  |  225 ----
+ .../test/etmem_migrate_ops_llt_test/CMakeLists.txt |   27 +
+ .../etmem_migrate_ops_llt.c                        |  225 ++++
+ etmem/test/etmem_slide_ops_llt_test/CMakeLists.txt |    1 +
+ .../etmem_slide_ops_llt_test/test_slide_ops.sh     |   19 +-
+ etmem/test/etmem_task_ops_llt_test/CMakeLists.txt  |    2 +-
+ etmem/test/test.sh                                 |   15 +
+ 14 files changed, 1924 insertions(+), 263 deletions(-)
+ create mode 100644 etmem/test/etmem_cslide_ops_llt_test/CMakeLists.txt
+ create mode 100644 etmem/test/etmem_cslide_ops_llt_test/cslide_showpage_test.sh
+ create mode 100644 etmem/test/etmem_cslide_ops_llt_test/etmem_cslide_ops_llt.c
+ create mode 100644 etmem/test/etmem_cslide_ops_llt_test/mem_access.c
+ delete mode 100644 etmem/test/etmem_migrate_ops_llt/CMakeLists.txt
+ delete mode 100644 etmem/test/etmem_migrate_ops_llt/etmem_migrate_ops_llt.c
+ create mode 100644 etmem/test/etmem_migrate_ops_llt_test/CMakeLists.txt
+ create mode 100644 etmem/test/etmem_migrate_ops_llt_test/etmem_migrate_ops_llt.c
+
+diff --git a/etmem/test/CMakeLists.txt b/etmem/test/CMakeLists.txt
+index 5bf3477..3cc9bf6 100644
+--- a/etmem/test/CMakeLists.txt
++++ b/etmem/test/CMakeLists.txt
+@@ -41,7 +41,8 @@ set(ETMEMD_SRC
+  ${ETMEMD_SRC_DIR}/etmemd_threadpool.c
+  ${ETMEMD_SRC_DIR}/etmemd_threadtimer.c
+  ${ETMEMD_SRC_DIR}/etmemd_pool_adapter.c
+- ${ETMEMD_SRC_DIR}/etmemd_migrate.c)
++ ${ETMEMD_SRC_DIR}/etmemd_migrate.c
++ ${ETMEMD_SRC_DIR}/etmemd_damon.c)
+ 
+ set(ETMEM_SRC
+  ${ETMEM_SRC_DIR}/etmem.c
+@@ -185,7 +186,7 @@ set_target_properties(etmem_shared PROPERTIES LINK_FLAGS ${COMMON_LINK_OPT})
+ target_link_libraries(etmem_shared PRIVATE ${COMMON_LINK_LIB})
+ SET_TARGET_PROPERTIES(etmem_shared PROPERTIES OUTPUT_NAME "etmem")
+ 
+-# target test etmemd share
++# target test common share
+ target_compile_options(test_common PRIVATE ${COMMON_COMPILE_OPT} ${SHARE_COMPILE_OPT})
+ set_target_properties(test_common PROPERTIES LINK_FLAGS ${COMMON_LINK_OPT})
+ target_link_libraries(test_common PRIVATE ${COMMON_LINK_LIB} ${SERVER_LINK_LIB})
+@@ -196,3 +197,16 @@ target_compile_options(cslide_dep PRIVATE ${COMMON_COMPILE_OPT} ${SHARE_COMPILE_
+ set_target_properties(cslide_dep PROPERTIES LINK_FLAGS ${COMMON_LINK_OPT})
+ target_link_libraries(cslide_dep PRIVATE ${COMMON_LINK_LIB} ${SERVER_LINK_LIB})
+ 
++add_subdirectory(etmem_common_func_llt_test)
++add_subdirectory(etmem_log_ops_llt_test)
++add_subdirectory(etmem_migrate_ops_llt_test)
++add_subdirectory(etmem_task_ops_llt_test)
++add_subdirectory(etmem_threadpool_ops_llt_test)
++add_subdirectory(etmem_socket_ops_llt_test)
++add_subdirectory(etmem_scan_ops_llt_test)
++add_subdirectory(etmem_scan_ops_export_llt_test)
++add_subdirectory(etmem_slide_ops_llt_test)
++add_subdirectory(etmem_timer_ops_llt_test)
++add_subdirectory(etmem_project_ops_llt_test)
++add_subdirectory(etmem_cslide_ops_llt_test)
++add_subdirectory(etmem_thirdparty_ops_llt_test)
+diff --git a/etmem/test/etmem_common_func_llt_test/etmem_common_func_llt.c b/etmem/test/etmem_common_func_llt_test/etmem_common_func_llt.c
+index f195d4d..1ba6299 100644
+--- a/etmem/test/etmem_common_func_llt_test/etmem_common_func_llt.c
++++ b/etmem/test/etmem_common_func_llt_test/etmem_common_func_llt.c
+@@ -30,6 +30,46 @@
+ #include "etmemd_common.h"
+ #include "etmemd_engine.h"
+ #include "etmemd_rpc.h"
++#include "etmemd_scan_exp.h"
++#include "etmemd_scan.h"
++#include "securec.h"
++
++#define RECLAIM_SWAPCACHE_MAGIC      0X77
++#define RECLAIM_SWAPCACHE_ON         _IOW(RECLAIM_SWAPCACHE_MAGIC, 0x1, unsigned int)
++#define SET_SWAPCACHE_WMARK          _IOW(RECLAIM_SWAPCACHE_MAGIC, 0x2, unsigned int)
++
++static FILE *open_conf_file(const char *file_name)
++{
++    FILE *file = NULL;
++    char path[PATH_MAX] = {0};
++    struct stat info;
++    int r;
++    int fd;
++
++    if (realpath(file_name, path) == NULL) {
++        return NULL;
++    }
++
++    fd = open(path, O_RDONLY);
++    if (fd == -1) {
++        return NULL;
++    }
++
++    r = fstat(fd, &info);
++    if (r == -1) {
++        close(fd);
++        return NULL;
++    }
++
++    if (S_ISDIR(info.st_mode)) {
++        close(fd);
++        return NULL;
++    }
++
++    file = fdopen(fd, "r");
++
++    return file;
++}
+ 
+ static void clean_flags(bool *ishelp)
+ {
+@@ -164,22 +204,138 @@ static void test_get_uint_value_ok(void)
+     CU_ASSERT_EQUAL(value, UINT_MAX);
+ }
+ 
++static void test_get_ulong_value_error(void)
++{
++    unsigned long value;
++
++    CU_ASSERT_EQUAL(get_unsigned_long_value("a1", &value), -1);
++}
++
++static void test_get_ulong_value_ok(void)
++{
++    unsigned long value;
++    char ulong_max[100] = {0};
++    char ulong_max_dec_one[100] = {0};
++    if (snprintf_s(ulong_max, 100, 99, "%d", ULONG_MAX) == -1) {
++        printf("error: get unsign long max string failed\n");
++        return;
++    }
++
++    if (snprintf_s(ulong_max_dec_one, 100, 99, "%d", ULONG_MAX - 1) == -1) {
++        printf("error: get unsign long max - 1 string failed\n");
++        return;
++    }
++
++    CU_ASSERT_EQUAL(get_unsigned_long_value("0", &value), 0);
++    CU_ASSERT_EQUAL(value, 0);
++    CU_ASSERT_EQUAL(get_unsigned_long_value("1", &value), 0);
++    CU_ASSERT_EQUAL(value, 1);
++    CU_ASSERT_EQUAL(get_unsigned_long_value(ulong_max_dec_one, &value), 0);
++    CU_ASSERT_EQUAL(value, ULONG_MAX - 1);
++    CU_ASSERT_EQUAL(get_unsigned_long_value(ulong_max, &value), 0);
++    CU_ASSERT_EQUAL(value, ULONG_MAX);
++}
++
+ static void test_get_proc_file_error(void)
+ {
+-    CU_ASSERT_PTR_NULL(etmemd_get_proc_file("0", "/maps", 0, "r"));
+-    CU_ASSERT_PTR_NULL(etmemd_get_proc_file("1", "maps", 0, "r"));
+-    CU_ASSERT_PTR_NULL(etmemd_get_proc_file("1", "/map", 0, "r"));
++    CU_ASSERT_PTR_NULL(etmemd_get_proc_file("0", "/maps", "r"));
++    CU_ASSERT_PTR_NULL(etmemd_get_proc_file("1", "maps", "r"));
++    CU_ASSERT_PTR_NULL(etmemd_get_proc_file("1", "/map", "r"));
+ }
+ 
+ static void test_get_proc_file_ok(void)
+ {
+     FILE *fp = NULL;
+ 
+-    fp = etmemd_get_proc_file("1", "/maps", 0, "r");
++    fp = etmemd_get_proc_file("1", "/maps", "r");
+ 
+     CU_ASSERT_EQUAL(fclose(fp), 0);
+ }
+ 
++static void test_get_mem_from_proc_file_error(void)
++{
++    unsigned long data = 0;
++
++    CU_ASSERT_EQUAL(get_mem_from_proc_file(NULL, "status", &data, "VmRSS"), -1);
++    CU_ASSERT_EQUAL(get_mem_from_proc_file("1", NULL, &data, "VmRSS"), -1);
++    CU_ASSERT_EQUAL(get_mem_from_proc_file(NULL, NULL, &data, "VmRSS"), -1);
++    CU_ASSERT_EQUAL(get_mem_from_proc_file("1", "status", &data, "VmTTTT"), -1);
++}
++
++static void test_get_mem_from_proc_file_ok(void)
++{
++    unsigned long data = 0;
++
++    CU_ASSERT_EQUAL(get_mem_from_proc_file("1", "/status", &data, "VmRSS"), 0);
++}
++
++static void test_get_swap_threshold_inKB_error(void)
++{
++    char *swap_threshold = "50m";
++    char *swap_threshold_too_long = "12345678900m";
++    unsigned long value = 0;
++
++    CU_ASSERT_EQUAL(get_swap_threshold_inKB(NULL, &value), -1);
++    CU_ASSERT_EQUAL(get_swap_threshold_inKB(swap_threshold, &value), -1);
++    CU_ASSERT_EQUAL(get_swap_threshold_inKB(swap_threshold_too_long, &value), -1);
++}
++
++static void test_get_swap_threshold_inKB_ok(void)
++{
++    char *swap_threshold = "50g";
++    char *swap_threshold_G = "50G";
++    unsigned long value = 0;
++
++    CU_ASSERT_EQUAL(get_swap_threshold_inKB(swap_threshold, &value), 0);
++    CU_ASSERT_EQUAL(get_swap_threshold_inKB(swap_threshold_G, &value), 0);
++}
++
++static void test_etmemd_send_ioctl_cmd_error(void)
++{
++    struct ioctl_para ioctl_para_test = {
++        .ioctl_cmd = VMA_SCAN_ADD_FLAGS,
++        .ioctl_parameter = VMA_SCAN_FLAG,
++    };
++    FILE *fp = NULL;
++
++    fp = etmemd_get_proc_file("1", "/swap_pages", "r+");
++    if (fp == NULL) {
++        printf("get proc file swap_pages failed.\n");
++        return;
++    }
++
++    CU_ASSERT_EQUAL(etmemd_send_ioctl_cmd(NULL, NULL), -1);
++    CU_ASSERT_EQUAL(etmemd_send_ioctl_cmd(NULL, &ioctl_para_test), -1);
++    CU_ASSERT_EQUAL(etmemd_send_ioctl_cmd(fp, NULL), -1);
++    fclose(fp);
++
++    fp = etmemd_get_proc_file("1", STATUS_FILE, "r+");
++    if (fp == NULL) {
++        printf("get proc file status failed.\n");
++        return;
++    }
++    CU_ASSERT_EQUAL(etmemd_send_ioctl_cmd(fp, &ioctl_para_test), -1);
++    fclose(fp);
++}
++
++static void test_etmemd_send_ioctl_cmd_ok(void)
++{
++    struct ioctl_para ioctl_para_test = {
++        .ioctl_cmd = SET_SWAPCACHE_WMARK,
++        .ioctl_parameter = 0,
++    };
++    FILE *fp = NULL;
++
++    fp = etmemd_get_proc_file("1", "/swap_pages", "r+");
++    if (fp == NULL) {
++        printf("get proc file swap_pages failed.\n");
++        return;
++    }
++
++    CU_ASSERT_EQUAL(etmemd_send_ioctl_cmd(fp, &ioctl_para_test), 0);
++    fclose(fp);
++}
++
+ static void test_get_key_value_error(void)
+ {
+     char key[KEY_VALUE_MAX_LEN] = {};
+@@ -276,12 +432,20 @@ int main(int argc, const char **argv)
+         CU_ADD_TEST(suite, test_get_int_value_ok) == NULL ||
+         CU_ADD_TEST(suite, test_get_uint_value_error) == NULL ||
+         CU_ADD_TEST(suite, test_get_uint_value_ok) == NULL ||
++        CU_ADD_TEST(suite, test_get_ulong_value_error) == NULL ||
++        CU_ADD_TEST(suite, test_get_ulong_value_ok) == NULL ||
+         CU_ADD_TEST(suite, test_get_key_value_error) == NULL ||
+         CU_ADD_TEST(suite, test_get_key_value_ok) == NULL ||
+         CU_ADD_TEST(suite, test_parse_cmdline_error) == NULL ||
+         CU_ADD_TEST(suite, test_parse_cmdline_ok) == NULL ||
+         CU_ADD_TEST(suite, test_get_proc_file_error) == NULL ||
+         CU_ADD_TEST(suite, test_get_proc_file_ok) == NULL ||
++        CU_ADD_TEST(suite, test_get_mem_from_proc_file_error) == NULL ||
++        CU_ADD_TEST(suite, test_get_mem_from_proc_file_ok) == NULL ||
++        CU_ADD_TEST(suite, test_get_swap_threshold_inKB_error) == NULL ||
++        CU_ADD_TEST(suite, test_get_swap_threshold_inKB_ok) == NULL ||
++        CU_ADD_TEST(suite, test_etmemd_send_ioctl_cmd_error) == NULL ||
++        CU_ADD_TEST(suite, test_etmemd_send_ioctl_cmd_ok) == NULL ||
+         CU_ADD_TEST(suite, test_etmem_systemd_service_0001) == NULL) {
+             printf("CU_ADD_TEST fail. \n");
+             goto ERROR;
+diff --git a/etmem/test/etmem_cslide_ops_llt_test/CMakeLists.txt b/etmem/test/etmem_cslide_ops_llt_test/CMakeLists.txt
+new file mode 100644
+index 0000000..6ff709b
+--- /dev/null
++++ b/etmem/test/etmem_cslide_ops_llt_test/CMakeLists.txt
+@@ -0,0 +1,30 @@
++# /******************************************************************************
++#  * Copyright (c) Huawei Technologies Co., Ltd. 2019-2021. All rights reserved.
++#  * etmem is licensed under the Mulan PSL v2.
++#  * You can use this software according to the terms and conditions of the Mulan PSL v2.
++#  * You may obtain a copy of Mulan PSL v2 at:
++#  *     http://license.coscl.org.cn/MulanPSL2
++#  * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR
++#  * IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY OR FIT FOR A PARTICULAR
++#  * PURPOSE.
++#  * See the Mulan PSL v2 for more details.
++#  * Author: shikemeng
++#  * Create: 2021-12-10
++#  * Description: CMakefileList for etmem_cslide_ops_llt to compile
++#  ******************************************************************************/
++
++project(etmem)
++
++INCLUDE_DIRECTORIES(../../inc/etmem_inc)
++INCLUDE_DIRECTORIES(../../inc/etmemd_inc)
++INCLUDE_DIRECTORIES(../common)
++INCLUDE_DIRECTORIES(${GLIB2_INCLUDE_DIRS})
++INCLUDE_DIRECTORIES(../../src/etmemd_src)
++
++SET(EXE etmem_cslide_ops_llt)
++
++add_executable(${EXE} etmem_cslide_ops_llt.c)
++add_executable(mem_access mem_access.c)
++
++target_link_libraries(${EXE} cunit ${BUILD_DIR}/lib/libcslide.so ${BUILD_DIR}/lib/libtest.so pthread dl rt boundscheck numa ${GLIB2_LIBRARIES})
++target_link_libraries(mem_access numa)
+diff --git a/etmem/test/etmem_cslide_ops_llt_test/cslide_showpage_test.sh b/etmem/test/etmem_cslide_ops_llt_test/cslide_showpage_test.sh
+new file mode 100644
+index 0000000..a365431
+--- /dev/null
++++ b/etmem/test/etmem_cslide_ops_llt_test/cslide_showpage_test.sh
+@@ -0,0 +1,217 @@
++#!/bin/bash
++
++# /******************************************************************************
++#  * Copyright (c) Huawei Technologies Co., Ltd. 2019-2021. All rights reserved.
++#  * etmem is licensed under the Mulan PSL v2.
++#  * You can use this software according to the terms and conditions of the Mulan PSL v2.
++#  * You may obtain a copy of Mulan PSL v2 at:
++#  *     http://license.coscl.org.cn/MulanPSL2
++#  * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR
++#  * IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY OR FIT FOR A PARTICULAR
++#  * PURPOSE.
++#  * See the Mulan PSL v2 for more details.
++#  * Author: shikemeng
++#  * Create: 2021-11-29
++#  * Description: test shell for etmem_cslide_ops_llt
++#  ******************************************************************************/
++node_pair=$1
++
++est_huge_num=2
++
++proj_config="../conf/conf_cslide/proj.config"
++
++eng_config="../conf/conf_cslide/eng.config"
++eng_config_bak="../conf/conf_cslide/eng.config.bak"
++
++task_config="../conf/conf_cslide/task.config"
++task_config_bak="../conf/conf_cslide/task.config.bak"
++
++# start server
++./bin/etmemd -l 0 -s dt_socket &
++sleep 1
++
++# add project
++cp ${eng_config} ${eng_config_bak}
++./bin/etmem obj add -f ${proj_config} -s dt_socket
++if [ "$?" != "0" ];then
++    echo "add project fail"
++    exit 1
++fi
++
++# add engine
++sed -i "s/node_pair=2,0;3,1/node_pair=${node_pair}/g" ${eng_config_bak}
++sed -i "s/node_mig_quota=256/node_mig_quota=0/g" ${eng_config_bak}
++./bin/etmem obj add -f ${eng_config_bak} -s dt_socket
++if [ "$?" != "0" ];then
++    echo "add cslide engine fail"
++    exit 1
++fi
++
++# add task with cold page
++./bin/mem_access 0 $((test_huge_num * 2)) 0 &
++mem_access0=$!
++cp ${task_config} ${task_config_bak}
++sed -i "s/value=1/value=${mem_access0}/g" ${task_config_bak}
++sed -i "s/name=background1/name=mem_access0/g" ${task_config_bak}
++./bin/etmem obj add -f ${task_config_bak} -s dt_socket
++if [ "$?" != "0" ];then
++    echo "add cslide engine fail"
++    exit 1
++fi
++
++./bin/mem_access 0 $((test_huge_num * 2)) 1 &
++mem_access1=$!
++cp ${task_config} ${task_config_bak}
++sed -i "s/value=1/value=${mem_access1}/g" ${task_config_bak}
++sed -i "s/name=background1/name=mem_access1/g" ${task_config_bak}
++./bin/etmem obj add -f ${task_config_bak} -s dt_socket
++if [ "$?" != "0" ];then
++    echo "add cslide engine fail"
++    exit 1
++fi
++
++./bin/etmem project start -n test -s dt_socket
++sleep 10
++./bin/etmem engine showtaskpages -t mem_access0 -n test -e cslide -s dt_socket | grep -v pages | grep -v node > task0_pages
++
++./bin/etmem engine showtaskpages -t mem_access1 -n test -e cslide -s dt_socket | grep -v pages | grep -v node > task1_pages
++
++./bin/etmem engine showhostpages -n test -e cslide -s dt_socket | grep -v pages | grep -v node > host_pages
++
++while read line; do
++    node_pages=($line)
++    if [ "${node_pages[0]}" == "0" ];then
++        if [ "${node_pages[1]}" != "$((test_huge_num * 2 * 1024))" ];then
++            echo "mem_access0 node ${node_pages[0]} used info wrong"
++            exit 1
++        fi
++        if [ "${node_pages[2]}" != "0" ];then
++            echo "mem_access0 node ${node_pages[0]} hot info wrong"
++            exit 1
++        fi
++        if [ "${node_pages[3]}" != "$((test_huge_num * 2 * 1024))" ];then
++            echo "mem_access0 node ${node_pages[0]} cold info wrong"
++            exit 1
++        fi
++    else
++        if [ "${node_pages[1]}" != "0" ];then
++            echo "mem_access0 node ${node_pages[0]} used info wrong"
++            exit 1
++        fi
++        if [ "${node_pages[2]}" != "0" ];then
++            echo "mem_access0 node ${node_pages[0]} hot info wrong"
++            exit 1
++        fi
++        if [ "${node_pages[3]}" != "0" ];then
++            echo "mem_access0 node ${node_pages[0]} cold info wrong"
++            exit 1
++        fi
++    fi
++done < task0_pages
++
++while read line; do
++    node_pages=($line)
++    if [ "${node_pages[0]}" == "0" ];then
++        if [ "${node_pages[1]}" != "$((test_huge_num * 2 * 1024))" ];then
++            echo "mem_access1 node ${node_pages[0]} used info wrong"
++            exit 1
++        fi
++        if [ "${node_pages[2]}" != "$((test_huge_num * 2 * 1024))" ];then
++            echo "mem_access1 node ${node_pages[0]} hot info wrong"
++            exit 1
++        fi
++        if [ "${node_pages[3]}" != "0" ];then
++            echo "mem_access1 node ${node_pages[0]} cold info wrong"
++            exit 1
++        fi
++    else
++        if [ "${node_pages[1]}" != "0" ];then
++            echo "mem_access1 node ${node_pages[0]} used info wrong"
++            exit 1
++        fi
++        if [ "${node_pages[2]}" != "0" ];then
++            echo "mem_access1 node ${node_pages[0]} hot info wrong"
++            exit 1
++        fi
++        if [ "${node_pages[3]}" != "0" ];then
++            echo "mem_access1 node ${node_pages[0]} cold info wrong"
++            exit 1
++        fi
++    fi
++done < task1_pages
++
++while read line; do
++    node_pages=($line)
++    hugepage_num=`cat /sys/devices/system/node/node${node_pages[0]}/hugepages/hugepages-2048kB/nr_hugepages`
++    hugepage_kb=$((hugepage_num * 2 * 1024))
++    if [ "${hugepage_kb}" != "${node_pages[1]}" ]; then
++        echo "node ${node_pages[0]} total info wrong"
++        exit 1
++    fi
++    if [ "${node_pages[0]}" == "0" ];then
++        if [ "${node_pages[2]}" != "$((test_huge_num * 4 * 1024))" ];then
++            echo "host node ${node_pages[0]} used info wrong"
++            exit 1
++        fi
++        if [ "${node_pages[3]}" != "$((test_huge_num * 2 * 1024))" ];then
++            echo "host node ${node_pages[0]} hot info wrong"
++            exit 1
++        fi
++        if [ "${node_pages[4]}" != "$((test_huge_num * 2 * 1024))" ];then
++            echo "host node ${node_pages[0]} cold info wrong"
++            exit 1
++        fi
++    else
++        if [ "${node_pages[2]}" != "0" ];then
++            echo "host node ${node_pages[0]} used info wrong"
++            exit 1
++        fi
++        if [ "${node_pages[3]}" != "0" ];then
++            echo "host node ${node_pages[0]} hot info wrong"
++            exit 1
++        fi
++        if [ "${node_pages[4]}" != "0" ];then
++            echo "host node ${node_pages[0]} cold info wrong"
++            exit 1
++        fi
++    fi
++done < host_pages
++
++./bin/etmem engine notsupport -t mem_access0 -n test -e cslide -s dt_socket
++if [ "$?" == "0" ];then
++    echo "engine notsupport cmd exe success unexpected"
++    exit 1
++fi
++
++./bin/etmem engine showtaskpages -t noexisttask -n test -e cslide -s dt_socket
++if [ "$?" == "0" ];then
++    echo "showtaskpages for no exist task success unexpected"
++    exit 1
++fi
++
++cp ${task_config} ${task_config_bak}
++sed -i "s/name=background1/name=mem_access0/g" ${task_config_bak}
++./bin/etmem obj del -f ${task_config_bak} -s dt_socket
++if [ "$?" != "0" ];then
++    echo "remove task mem_access0 fail"
++    exit 1
++fi
++
++cp ${task_config} ${task_config_bak}
++sed -i "s/name=background1/name=mem_access1/g" ${task_config_bak}
++./bin/etmem obj del -f ${task_config_bak} -s dt_socket
++if [ "$?" != "0" ];then
++    echo "remove task mem_access1 fail"
++    exit 1
++fi
++sleep 10
++
++./bin/etmem engine showhostpages -n test -e cslide -s dt_socket
++if [ "$?" == "0" ];then
++    echo "exec cmd for engine without task success unexpected"
++    exit 1
++fi
++
++killall mem_access
++killall etmemd
++exit 0
+diff --git a/etmem/test/etmem_cslide_ops_llt_test/etmem_cslide_ops_llt.c b/etmem/test/etmem_cslide_ops_llt_test/etmem_cslide_ops_llt.c
+new file mode 100644
+index 0000000..655bb4f
+--- /dev/null
++++ b/etmem/test/etmem_cslide_ops_llt_test/etmem_cslide_ops_llt.c
+@@ -0,0 +1,1119 @@
++/******************************************************************************
++ * Copyright (c) Huawei Technologies Co., Ltd. 2019-2021. All rights reserved.
++ * etmem is licensed under the Mulan PSL v2.
++ * You can use this software according to the terms and conditions of the Mulan PSL v2.
++ * You may obtain a copy of Mulan PSL v2 at:
++ * http://license.coscl.org.cn/MulanPSL2
++ * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR
++ * IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY OR FIT FOR A PARTICULAR
++ * PURPOSE.
++ * See the Mulan PSL v2 for more details.
++ * Author: shikemeng
++ * Create: 2021-12-10
++ * Description: This is a source file of the unit test for cslide functions in etmem.
++ ******************************************************************************/
++
++#include <stdio.h>
++#include <limits.h>
++#include <stdlib.h>
++#include <sys/mman.h>
++#include <unistd.h>
++#include <string.h>
++#include <numa.h>
++
++#include "test_common.h"
++#include "etmemd_project.h"
++#include "securec.h"
++
++#include <CUnit/Basic.h>
++#include <CUnit/Automated.h>
++#include <CUnit/Console.h>
++
++#include "etmemd_cslide.c"
++
++#define CHARNUM                     32
++
++#define FLAGS                       (MAP_PRIVATE | MAP_ANONYMOUS | MAP_HUGETLB)
++#define PROTECTION                  (PROT_READ | PROT_WRITE)
++#define TEST_HUGEPAGE_NUM           (10)
++#define HUGE_SHIFT                  21
++#define BYTE_TO_MB_SHIFT            20
++#define HUGE_TO_MB                  2
++
++#define DEFAULT_MIG_QUOTA           1024
++#define MAX_PATH                    1024
++#define MAX_CMD                     1024
++
++#define TEST_LOOP                   3
++#define TEST_LIMIT_HUGE             1
++#define TEST_LIMIT_COLD_HUGE        4
++#define TEST_LIMIT_HOT_FREE_HUGE    4
++#define TEST_LIMIT_COLD_FREE_HUGE   1
++
++#define NO_EXIST_PID                444444
++static struct proj_test_param       g_proj_param;
++static struct cslide_eng_test_param g_default_cslide_eng;
++
++static char *g_vmflags_array[] = {
++    "ht",
++};
++
++static void add_default_proj(void)
++{
++    init_proj_param(&g_proj_param);
++    do_add_proj_test(&g_proj_param);
++}
++
++static void rm_default_proj(void)
++{
++    do_rm_proj_test(&g_proj_param);
++}
++
++/* add with a correct config */
++void test_etmem_add_cslide_0001(void)
++{
++    struct cslide_eng_test_param cslide_param;
++    GKeyFile *config = NULL;
++
++    add_default_proj();
++    init_cslide_eng(&cslide_param);
++
++    config = construct_cslide_eng_config(&cslide_param);
++    CU_ASSERT_EQUAL(etmemd_project_add_engine(config), OPT_SUCCESS);
++    CU_ASSERT_EQUAL(etmemd_project_remove_engine(config), OPT_SUCCESS);
++    destroy_cslide_eng_config(config);
++    rm_default_proj();
++}
++
++void test_etmem_invalid_node_pair(struct cslide_eng_test_param *param)
++{
++    GKeyFile *config = NULL;
++
++    /* lack of node */
++    param->node_pair = "0,2";
++    config = construct_cslide_eng_config(param);
++    CU_ASSERT_NOT_EQUAL(etmemd_project_add_engine(config), OPT_SUCCESS);
++    destroy_cslide_eng_config(config);
++
++    /* node out of range */
++    param->node_pair = "0,2;1,3;4,5";
++    config = construct_cslide_eng_config(param);
++    CU_ASSERT_NOT_EQUAL(etmemd_project_add_engine(config), OPT_SUCCESS);
++    destroy_cslide_eng_config(config);
++
++    /* hot node invalid */
++    param->node_pair = "0x&,2";
++    config = construct_cslide_eng_config(param);
++    CU_ASSERT_NOT_EQUAL(etmemd_project_add_engine(config), OPT_SUCCESS);
++    destroy_cslide_eng_config(config);
++
++    /* cold node invalid */
++    param->node_pair = "0,x&2";
++    config = construct_cslide_eng_config(param);
++    CU_ASSERT_NOT_EQUAL(etmemd_project_add_engine(config), OPT_SUCCESS);
++    destroy_cslide_eng_config(config);
++
++    /* empty */
++    param->node_pair = "";
++    config = construct_cslide_eng_config(param);
++    CU_ASSERT_NOT_EQUAL(etmemd_project_add_engine(config), OPT_SUCCESS);
++    destroy_cslide_eng_config(config);
++
++    /* node remap */
++    param->node_pair = "0,2;0,3";
++    config = construct_cslide_eng_config(param);
++    CU_ASSERT_NOT_EQUAL(etmemd_project_add_engine(config), OPT_SUCCESS);
++    destroy_cslide_eng_config(config);
++
++    /* cold node null */
++    param->node_pair = "0,";
++    config = construct_cslide_eng_config(param);
++    CU_ASSERT_NOT_EQUAL(etmemd_project_add_engine(config), OPT_SUCCESS);
++    destroy_cslide_eng_config(config);
++
++    /* hot node null */
++    param->node_pair = ",;";
++    config = construct_cslide_eng_config(param);
++    CU_ASSERT_NOT_EQUAL(etmemd_project_add_engine(config), OPT_SUCCESS);
++    destroy_cslide_eng_config(config);
++
++    /* reset with correcct node_pair */
++    param->node_pair = "0,2;1,3";
++}
++
++void test_etmem_invalid_hot_threshold(struct cslide_eng_test_param *param)
++{
++    GKeyFile *config = NULL;
++    char test_thresh[CHARNUM];
++
++    param->hot_threshold = "";
++    config = construct_cslide_eng_config(param);
++    CU_ASSERT_NOT_EQUAL(etmemd_project_add_engine(config), OPT_SUCCESS);
++    destroy_cslide_eng_config(config);
++
++    param->hot_threshold = "1abc";
++    config = construct_cslide_eng_config(param);
++    CU_ASSERT_NOT_EQUAL(etmemd_project_add_engine(config), OPT_SUCCESS);
++    destroy_cslide_eng_config(config);
++
++    param->hot_threshold = "-1";
++    config = construct_cslide_eng_config(param);
++    CU_ASSERT_NOT_EQUAL(etmemd_project_add_engine(config), OPT_SUCCESS);
++    destroy_cslide_eng_config(config);
++
++    param->hot_threshold = "0";
++    config = construct_cslide_eng_config(param);
++    CU_ASSERT_EQUAL(etmemd_project_add_engine(config), OPT_SUCCESS);
++    CU_ASSERT_EQUAL(etmemd_project_remove_engine(config), OPT_SUCCESS);
++    destroy_cslide_eng_config(config);
++
++    if (snprintf_s(test_thresh, CHARNUM, CHARNUM - 1, "%d", INT_MAX) <= 0) {
++        CU_FAIL("snprintf_s fail");
++    }
++    param->hot_threshold = test_thresh;
++    config = construct_cslide_eng_config(param);
++    CU_ASSERT_EQUAL(etmemd_project_add_engine(config), OPT_SUCCESS);
++    CU_ASSERT_EQUAL(etmemd_project_remove_engine(config), OPT_SUCCESS);
++    destroy_cslide_eng_config(config);
++
++
++    if (snprintf_s(test_thresh, CHARNUM, CHARNUM - 1, "%lld", (long long)INT_MAX + 1) <= 0) {
++        CU_FAIL("snprintf_s fail");
++    }
++    param->hot_threshold = test_thresh;
++    config = construct_cslide_eng_config(param);
++    CU_ASSERT_NOT_EQUAL(etmemd_project_add_engine(config), OPT_SUCCESS);
++    destroy_cslide_eng_config(config);
++
++    /* reset with correct hot_threshold */
++    param->hot_threshold = "1";
++}
++
++void test_etmem_invalid_mig_quota(struct cslide_eng_test_param *param)
++{
++    GKeyFile *config = NULL;
++    char test_quota[CHARNUM];
++
++    param->node_mig_quota = "";
++    config = construct_cslide_eng_config(param);
++    CU_ASSERT_NOT_EQUAL(etmemd_project_add_engine(config), OPT_SUCCESS);
++    destroy_cslide_eng_config(config);
++
++    param->node_mig_quota = "-1";
++    config = construct_cslide_eng_config(param);
++    CU_ASSERT_NOT_EQUAL(etmemd_project_add_engine(config), OPT_SUCCESS);
++    destroy_cslide_eng_config(config);
++
++    param->node_mig_quota = "0";
++    config = construct_cslide_eng_config(param);
++    CU_ASSERT_EQUAL(etmemd_project_add_engine(config), OPT_SUCCESS);
++    CU_ASSERT_EQUAL(etmemd_project_remove_engine(config), OPT_SUCCESS);
++    destroy_cslide_eng_config(config);
++
++    if (snprintf_s(test_quota, CHARNUM, CHARNUM - 1, "%d", INT_MAX) <= 0) {
++        CU_FAIL("snprintf_s fail");
++    }
++    param->node_mig_quota = test_quota;
++    config = construct_cslide_eng_config(param);
++    CU_ASSERT_EQUAL(etmemd_project_add_engine(config), OPT_SUCCESS);
++    CU_ASSERT_EQUAL(etmemd_project_remove_engine(config), OPT_SUCCESS);
++    destroy_cslide_eng_config(config);
++
++    if (snprintf_s(test_quota, CHARNUM, CHARNUM - 1, "%lld", (long long)INT_MAX + 1) <= 0) {
++        CU_FAIL("snprintf_s fail");
++    }
++    param->node_mig_quota = test_quota;
++    config = construct_cslide_eng_config(param);
++    CU_ASSERT_NOT_EQUAL(etmemd_project_add_engine(config), OPT_SUCCESS);
++    destroy_cslide_eng_config(config);
++
++    /* reset with correct node_mig_quota */
++    param->node_mig_quota = "1024";
++}
++
++void test_etmem_invalid_hot_reserve(struct cslide_eng_test_param *param)
++{
++    GKeyFile *config = NULL;
++    char test_resv[CHARNUM];
++
++    param->node_hot_reserve = "";
++    config = construct_cslide_eng_config(param);
++    CU_ASSERT_NOT_EQUAL(etmemd_project_add_engine(config), OPT_SUCCESS);
++    destroy_cslide_eng_config(config);
++
++    param->node_hot_reserve = "1abc";
++    config = construct_cslide_eng_config(param);
++    CU_ASSERT_NOT_EQUAL(etmemd_project_add_engine(config), OPT_SUCCESS);
++    destroy_cslide_eng_config(config);
++
++    param->node_hot_reserve = "-1";
++    config = construct_cslide_eng_config(param);
++    CU_ASSERT_NOT_EQUAL(etmemd_project_add_engine(config), OPT_SUCCESS);
++    destroy_cslide_eng_config(config);
++
++    param->node_hot_reserve = "0";
++    config = construct_cslide_eng_config(param);
++    CU_ASSERT_EQUAL(etmemd_project_add_engine(config), OPT_SUCCESS);
++    CU_ASSERT_EQUAL(etmemd_project_remove_engine(config), OPT_SUCCESS);
++    destroy_cslide_eng_config(config);
++
++    if (snprintf_s(test_resv, CHARNUM, CHARNUM - 1, "%d", INT_MAX) <= 0) {
++        CU_FAIL("snprintf_s fail");
++    }
++    param->node_hot_reserve = test_resv;
++    config = construct_cslide_eng_config(param);
++    CU_ASSERT_EQUAL(etmemd_project_add_engine(config), OPT_SUCCESS);
++    CU_ASSERT_EQUAL(etmemd_project_remove_engine(config), OPT_SUCCESS);
++    destroy_cslide_eng_config(config);
++
++    if (snprintf_s(test_resv, CHARNUM, CHARNUM - 1, "%lld", (long long)INT_MAX + 1) <= 0) {
++        CU_FAIL("snprintf_s fail");
++    }
++    param->node_hot_reserve = test_resv;
++    config = construct_cslide_eng_config(param);
++    CU_ASSERT_NOT_EQUAL(etmemd_project_add_engine(config), OPT_SUCCESS);
++    destroy_cslide_eng_config(config);
++
++    /* reset with correct node_hot_reserve */
++    param->node_hot_reserve = "1024";
++}
++
++/* add with a wrong config */
++void test_etmem_add_cslide_0002(void)
++{
++    struct cslide_eng_test_param cslide_param;
++    GKeyFile *config = NULL;
++
++    add_default_proj();
++    init_cslide_eng(&cslide_param);
++
++    test_etmem_invalid_node_pair(&cslide_param);
++    test_etmem_invalid_hot_threshold(&cslide_param);
++    test_etmem_invalid_mig_quota(&cslide_param);
++    test_etmem_invalid_hot_reserve(&cslide_param);
++    rm_default_proj();
++}
++
++/* delete cslide with correct config */
++void test_etmem_del_cslide_0001(void)
++{
++    struct cslide_eng_test_param cslide_param;
++    GKeyFile *config = NULL;
++
++    add_default_proj();
++    init_cslide_eng(&cslide_param);
++
++    config = construct_cslide_eng_config(&cslide_param);
++    CU_ASSERT_EQUAL(etmemd_project_add_engine(config), OPT_SUCCESS);
++    CU_ASSERT_EQUAL(etmemd_project_remove_engine(config), OPT_SUCCESS);
++    destroy_cslide_eng_config(config);
++    rm_default_proj();
++}
++
++/* delete cslide with wrong config */
++void test_etmem_del_cslide_0002(void)
++{
++    struct cslide_eng_test_param cslide_param;
++    GKeyFile *config = NULL;
++
++    add_default_proj();
++    init_cslide_eng(&cslide_param);
++
++    /* delete not existed cslide */
++    config = construct_cslide_eng_config(&cslide_param);
++    CU_ASSERT_EQUAL(etmemd_project_remove_engine(config), OPT_ENG_NOEXIST);
++    destroy_cslide_eng_config(config);
++    rm_default_proj();
++}
++
++static void add_default_cslide_eng(void)
++{
++    GKeyFile *config = NULL;
++
++    init_cslide_eng(&g_default_cslide_eng);
++
++    config = construct_cslide_eng_config(&g_default_cslide_eng);
++    CU_ASSERT_EQUAL(etmemd_project_add_engine(config), OPT_SUCCESS);
++    destroy_cslide_eng_config(config);
++}
++
++static void rm_default_cslide_eng(void)
++{
++    GKeyFile *config = NULL;
++
++    config = construct_cslide_eng_config(&g_default_cslide_eng);
++    CU_ASSERT_EQUAL(etmemd_project_remove_engine(config), OPT_SUCCESS);
++    destroy_cslide_eng_config(config);
++}
++
++static void fill_random(void *addr, size_t len)
++{
++    size_t i;
++    for (i = 0; i < len / sizeof(int); i++) {
++        ((int *)addr)[i] = rand();
++    }
++}
++
++static int check_addr_node(void *addr, pid_t pid, int node, int num)
++{
++    unsigned int i;
++    void *pages[TEST_HUGEPAGE_NUM];
++    int status[TEST_HUGEPAGE_NUM];
++
++    for (i = 0; i < num; i++) {
++        pages[i] = (void *)((uint64_t)addr + (1 << HUGE_SHIFT) * i);
++    }
++
++    if (move_pages(pid, TEST_HUGEPAGE_NUM, pages, NULL, status, MPOL_MF_MOVE_ALL) < 0) {
++        perror("move_page:");
++        return -1;
++    }
++
++    for (i = 0; i < num; i++) {
++        if (status[i] != node) {
++            printf("hugepage not in expect node\n");
++            return -1;
++        }
++    }
++
++    return 0;
++}
++
++static int page_refs_num(struct page_refs *page_refs)
++{
++    int ret = 0;
++
++    while (page_refs != NULL) {
++        ret++;
++        page_refs = page_refs->next;
++    }
++
++    printf("page_refs num %d\n", ret);
++    return ret;
++}
++
++static void *get_hugepage(unsigned int num, int node, pid_t pid)
++{
++    void *addr = NULL;
++    unsigned long nodemask;
++    size_t len = num << HUGE_SHIFT;
++    int ret;
++    void *pages[TEST_HUGEPAGE_NUM];
++    int status[TEST_HUGEPAGE_NUM];
++    int nodes[TEST_HUGEPAGE_NUM];
++    int i;
++
++    addr = mmap(NULL, len, PROTECTION, FLAGS, -1, 0);
++    if (addr == NULL) {
++        return addr;
++    }
++    fill_random(addr, len);
++
++    for (i = 0; i < num; i++) {
++        pages[i] = (void *)((uint64_t)addr + (1 << HUGE_SHIFT) * i);
++        nodes[i] = node;
++    }
++
++    if (move_pages(pid, num, pages, nodes, status, MPOL_MF_MOVE_ALL) != 0) {
++        perror("move_pages fail: ");
++        return NULL;
++    }
++
++    if (check_addr_node(addr, pid, node, num) != 0) {
++        printf("init place hugepage fail\n");
++        return NULL;
++    }
++
++    return addr;
++}
++
++static int free_hugepage(void *addr, unsigned int num)
++{
++    return munmap(addr, num << HUGE_SHIFT);
++}
++
++static int init_hugepage(void)
++{
++    int node_num = numa_num_configured_nodes();
++    char cmd[MAX_CMD];
++    int i;
++
++    for (i = 0; i < node_num; i++) {
++        if (snprintf_s(cmd, MAX_CMD, MAX_CMD - 1, 
++                       "echo 10000 > /sys/devices/system/node/node%d/hugepages/hugepages-2048kB/nr_hugepages", i) <= 0) {
++            printf("snprintf_s fail\n");
++            return -1;
++        }
++        if (system(cmd) != 0) {
++            return -1;
++        }
++    }
++
++    return 0;
++}
++
++void test_etmem_add_task_0001(void)
++{
++    struct cslide_task_test_param cslide_task;
++    char pid_char[CHARNUM];
++    GKeyFile *config = NULL;
++    pid_t pid;
++    void *addr = NULL;
++    int cold_node, hot_node;
++
++    add_default_proj();
++    add_default_cslide_eng();
++
++    init_cslide_task(&cslide_task);
++
++    config = construct_cslide_task_config(&cslide_task);
++    CU_ASSERT_EQUAL(etmemd_project_add_task(config), OPT_SUCCESS);
++    CU_ASSERT_EQUAL(etmemd_project_remove_task(config), OPT_SUCCESS);
++    destroy_cslide_task_config(config);
++
++    pid = getpid();
++    if (snprintf_s(pid_char, CHARNUM, CHARNUM - 1, "%d", pid) <= 0) {
++        CU_FAIL("snprintf_s fail");
++    }
++    cslide_task.task_param.value = pid_char;
++    cold_node = get_first_cold_node(&g_default_cslide_eng);
++    addr = get_hugepage(TEST_HUGEPAGE_NUM, cold_node, pid);
++    CU_ASSERT_PTR_NOT_NULL(addr);
++
++    config = construct_cslide_task_config(&cslide_task);
++    CU_ASSERT_EQUAL(etmemd_project_add_task(config), OPT_SUCCESS);
++    CU_ASSERT_EQUAL(etmemd_migrate_start(DEFAULT_PROJ), OPT_SUCCESS);
++    sleep(10);
++    CU_ASSERT_EQUAL(etmemd_migrate_stop(DEFAULT_PROJ), OPT_SUCCESS);
++    CU_ASSERT_EQUAL(etmemd_project_remove_task(config), OPT_SUCCESS);
++    CU_ASSERT_EQUAL(check_addr_node(addr, pid, 0, TEST_HUGEPAGE_NUM), 0);
++
++    hot_node = get_first_hot_node(&g_default_cslide_eng);
++    CU_ASSERT_EQUAL(free_hugepage(addr, TEST_HUGEPAGE_NUM), hot_node);
++    rm_default_cslide_eng();
++    rm_default_proj();
++}
++
++/* Cslide only support "ht" now. Any other value is invalid */
++static void test_etmem_invalid_vm_flags(struct cslide_task_test_param *param)
++{
++    GKeyFile *config = NULL;
++
++    param->vm_flags = "hts";
++    config = construct_cslide_task_config(param);
++    CU_ASSERT_NOT_EQUAL(etmemd_project_add_task(config), OPT_SUCCESS);
++    destroy_cslide_task_config(config);
++
++    param->vm_flags = "";
++    config = construct_cslide_task_config(param);
++    CU_ASSERT_NOT_EQUAL(etmemd_project_add_task(config), OPT_SUCCESS);
++    destroy_cslide_task_config(config);
++
++    param->vm_flags = "rd";
++    config = construct_cslide_task_config(param);
++    CU_ASSERT_NOT_EQUAL(etmemd_project_add_task(config), OPT_SUCCESS);
++    destroy_cslide_task_config(config);
++
++    param->vm_flags = "ht rd";
++    config = construct_cslide_task_config(param);
++    CU_ASSERT_NOT_EQUAL(etmemd_project_add_task(config), OPT_SUCCESS);
++    destroy_cslide_task_config(config);
++
++    /* reset to normal vm flag */
++    param->vm_flags = "ht";
++}
++
++static void test_etmem_invalid_anon_only(struct cslide_task_test_param *param)
++{
++    GKeyFile *config = NULL;
++
++    param->anon_only = "wrong";
++    config = construct_cslide_task_config(param);
++    CU_ASSERT_NOT_EQUAL(etmemd_project_add_task(config), OPT_SUCCESS);
++    destroy_cslide_task_config(config);
++
++    param->anon_only = "";
++    config = construct_cslide_task_config(param);
++    CU_ASSERT_NOT_EQUAL(etmemd_project_add_task(config), OPT_SUCCESS);
++    destroy_cslide_task_config(config);
++
++    param->anon_only = "yes";
++    config = construct_cslide_task_config(param);
++    CU_ASSERT_EQUAL(etmemd_project_add_task(config), OPT_SUCCESS);
++    CU_ASSERT_EQUAL(etmemd_project_remove_task(config), OPT_SUCCESS);
++    destroy_cslide_task_config(config);
++}
++
++static void test_etmem_invalid_ign_host(struct cslide_task_test_param *param)
++{
++    GKeyFile *config = NULL;
++
++    param->ign_host = "wrong";
++    config = construct_cslide_task_config(param);
++    CU_ASSERT_NOT_EQUAL(etmemd_project_add_task(config), OPT_SUCCESS);
++    destroy_cslide_task_config(config);
++
++    param->ign_host = "";
++    config = construct_cslide_task_config(param);
++    CU_ASSERT_NOT_EQUAL(etmemd_project_add_task(config), OPT_SUCCESS);
++    destroy_cslide_task_config(config);
++
++    param->ign_host = "yes";
++    config = construct_cslide_task_config(param);
++    CU_ASSERT_EQUAL(etmemd_project_add_task(config), OPT_SUCCESS);
++    CU_ASSERT_EQUAL(etmemd_project_remove_task(config), OPT_SUCCESS);
++    destroy_cslide_task_config(config);
++}
++
++void test_etmem_add_task_0002(void)
++{
++    struct cslide_task_test_param cslide_task;
++
++    add_default_proj();
++    add_default_cslide_eng();
++
++    init_cslide_task(&cslide_task);
++
++    test_etmem_invalid_vm_flags(&cslide_task);
++    test_etmem_invalid_anon_only(&cslide_task);
++    test_etmem_invalid_ign_host(&cslide_task);
++
++    rm_default_cslide_eng();
++    rm_default_proj();
++}
++
++void test_etmem_del_task_0001(void)
++{
++    struct cslide_task_test_param cslide_task;
++    GKeyFile *config = NULL;
++
++    add_default_proj();
++    add_default_cslide_eng();
++
++    init_cslide_task(&cslide_task);
++
++    config = construct_cslide_task_config(&cslide_task);
++    CU_ASSERT_EQUAL(etmemd_project_add_task(config), OPT_SUCCESS);
++    CU_ASSERT_EQUAL(etmemd_project_remove_task(config), OPT_SUCCESS);
++    destroy_cslide_task_config(config);
++
++    rm_default_cslide_eng();
++    rm_default_proj();
++}
++
++void test_etmem_del_task_0002(void)
++{
++    struct cslide_task_test_param cslide_task;
++    GKeyFile *config = NULL;
++
++    add_default_proj();
++    add_default_cslide_eng();
++
++    init_cslide_task(&cslide_task);
++
++    /* delete not existed task */
++    config = construct_cslide_task_config(&cslide_task);
++    CU_ASSERT_EQUAL(etmemd_project_remove_task(config), OPT_TASK_NOEXIST);
++    destroy_cslide_task_config(config);
++
++    cslide_task.task_param.name = "";
++    config = construct_cslide_task_config(&cslide_task);
++    CU_ASSERT_NOT_EQUAL(etmemd_project_remove_task(config), OPT_SUCCESS);
++    destroy_cslide_task_config(config);
++
++    rm_default_cslide_eng();
++    rm_default_proj();
++}
++
++static void init_cslide_params(struct cslide_pid_params **pid_params,
++                               struct cslide_task_params *task_params,
++                               struct cslide_eng_params *eng_params)
++{
++    int hot_node, cold_node;
++
++    CU_ASSERT_EQUAL(memset_s(task_params, sizeof(*task_params), 0, sizeof(*task_params)), EOK);
++    CU_ASSERT_EQUAL(memset_s(eng_params, sizeof(*eng_params), 0, sizeof(*eng_params)), EOK);
++
++    /* init eng_params */
++    CU_ASSERT_EQUAL(init_cslide_eng_params(eng_params), 0);
++    eng_params->loop = TEST_LOOP;
++    eng_params->interval = 1;
++    eng_params->sleep = 1;
++    eng_params->hot_threshold = 1;
++    eng_params->mig_quota = DEFAULT_MIG_QUOTA;
++    eng_params->hot_reserve = 0;
++    hot_node = get_first_hot_node(&g_default_cslide_eng);
++    cold_node = get_first_cold_node(&g_default_cslide_eng);
++    add_node_pair(&eng_params->node_map, cold_node, hot_node);
++    if (numa_num_configured_nodes() > ONE_NODE_PAIR) {
++        hot_node = get_second_hot_node(&g_default_cslide_eng);
++        cold_node = get_second_cold_node(&g_default_cslide_eng);
++        add_node_pair(&eng_params->node_map, cold_node, hot_node);
++    }
++
++    /* init task_params with scan info */
++    task_params->anon_only = false;
++    task_params->vmflags_num = 1;
++    task_params->vmflags_array = g_vmflags_array;
++    task_params->scan_flags |= SCAN_AS_HUGE | SCAN_IGN_HOST;
++
++    *pid_params = alloc_pid_params(eng_params);
++    CU_ASSERT_PTR_NOT_NULL(*pid_params);
++    /* init pid_params */
++    (*pid_params)->pid = getpid();
++    (*pid_params)->eng_params = eng_params;
++    (*pid_params)->task_params = task_params;
++    factory_add_pid_params(&eng_params->factory, *pid_params);
++    factory_update_pid_params(&eng_params->factory);
++}
++
++static void set_page_count(struct cslide_pid_params *pid_params, int count,
++                           void *start_addr, void *end_addr)
++{
++    int i;
++    struct page_refs *page_refs = NULL;
++    int page_count = 0;
++
++    for (i = 0; i < pid_params->vmas->vma_cnt; i++) {
++        page_refs = pid_params->vma_pf[i].page_refs;
++        for (; page_refs != NULL; page_refs = page_refs->next) {
++            if ((uint64_t)page_refs->addr < (uint64_t)end_addr &&
++                (uint64_t)page_refs->addr >= (uint64_t)start_addr) {
++                page_refs->count = count;
++                page_count++;
++            }
++        }
++    }
++
++    printf("page_count: %d\n", page_count);
++}
++
++/* test move hot pages */
++static void test_etmem_cslide_policy_001(void)
++{
++    struct cslide_pid_params *pid_params = NULL;
++    struct cslide_task_params task_params;
++    struct cslide_eng_params eng_params;
++    void *hot_addr = NULL;
++    void *cold_addr = NULL;
++    pid_t pid = getpid();
++    struct memory_grade *memory_grade = NULL;
++    int cold_node, hot_node;
++
++    /* init */
++    init_cslide_eng(&g_default_cslide_eng);
++    init_cslide_params(&pid_params, &task_params, &eng_params);
++    cold_node = get_first_cold_node(&g_default_cslide_eng);
++    hot_node = get_first_hot_node(&g_default_cslide_eng);
++    hot_addr = get_hugepage(TEST_HUGEPAGE_NUM, cold_node, pid);
++    get_sys_mem(&eng_params.mem);
++
++    /* unlimited hot move */
++    CU_ASSERT_EQUAL(cslide_do_scan(&eng_params), 0);
++    set_page_count(pid_params, TEST_LOOP, hot_addr, hot_addr + (TEST_HUGEPAGE_NUM << HUGE_SHIFT));
++    CU_ASSERT_EQUAL(cslide_policy(&eng_params), 0);
++    memory_grade = &pid_params->memory_grade[0];
++    CU_ASSERT_EQUAL(page_refs_num(memory_grade->hot_pages), TEST_HUGEPAGE_NUM);
++    cslide_clean_params(&eng_params);
++
++    /* hot move is not limited by hot_reserve */
++    CU_ASSERT_EQUAL(cslide_do_scan(&eng_params), 0);
++    set_page_count(pid_params, TEST_LOOP, hot_addr, hot_addr + (TEST_HUGEPAGE_NUM << HUGE_SHIFT));
++    eng_params.hot_reserve = eng_params.mem.node_mem[hot_node].huge_total >> BYTE_TO_MB_SHIFT;
++    CU_ASSERT_EQUAL(cslide_policy(&eng_params), 0);
++    memory_grade = &pid_params->memory_grade[0];
++    CU_ASSERT_EQUAL(page_refs_num(memory_grade->hot_pages), TEST_HUGEPAGE_NUM);
++    cslide_clean_params(&eng_params);
++    eng_params.hot_reserve = 0;
++
++    /* hot move is limited by mig_quota with 1 */
++    CU_ASSERT_EQUAL(cslide_do_scan(&eng_params), 0);
++    set_page_count(pid_params, TEST_LOOP, hot_addr, hot_addr + ((TEST_HUGEPAGE_NUM / 2) << HUGE_SHIFT));
++    set_page_count(pid_params, TEST_LOOP - 1, hot_addr + ((TEST_HUGEPAGE_NUM / 2) << HUGE_SHIFT), 
++                   hot_addr + (TEST_HUGEPAGE_NUM << HUGE_SHIFT));
++    eng_params.mig_quota = TEST_LIMIT_HUGE * HUGE_TO_MB;
++    CU_ASSERT_EQUAL(cslide_policy(&eng_params), 0);
++    CU_ASSERT_EQUAL(page_refs_num(memory_grade->hot_pages), TEST_LIMIT_HUGE);
++    cslide_clean_params(&eng_params);
++    eng_params.mig_quota = DEFAULT_MIG_QUOTA;
++
++    /* limited by "free space" + "cold page space" in hot node */
++    cold_addr = get_hugepage(TEST_LIMIT_COLD_HUGE, hot_node, pid);
++    CU_ASSERT_EQUAL(cslide_do_scan(&eng_params), 0);
++    set_page_count(pid_params, 0, cold_addr, cold_addr + (TEST_LIMIT_COLD_HUGE << HUGE_SHIFT));
++    eng_params.mem.node_mem[hot_node].huge_free = TEST_LIMIT_HOT_FREE_HUGE << HUGE_SHIFT;
++    set_page_count(pid_params, TEST_LOOP, hot_addr, hot_addr + (TEST_HUGEPAGE_NUM << HUGE_SHIFT));
++
++    CU_ASSERT_EQUAL(cslide_policy(&eng_params), 0);
++    CU_ASSERT_EQUAL(page_refs_num(memory_grade->hot_pages), 
++                    TEST_LIMIT_COLD_HUGE + TEST_LIMIT_HOT_FREE_HUGE);
++    CU_ASSERT_EQUAL(page_refs_num(memory_grade->cold_pages), TEST_LIMIT_COLD_HUGE);
++    cslide_clean_params(&eng_params);
++
++    /* limited by "hot node free space" + "cold node free space" */
++    CU_ASSERT_EQUAL(cslide_do_scan(&eng_params), 0);
++    set_page_count(pid_params, TEST_LOOP, hot_addr, hot_addr + (TEST_HUGEPAGE_NUM << HUGE_SHIFT));
++    set_page_count(pid_params, 0, cold_addr, cold_addr + (TEST_LIMIT_COLD_HUGE << HUGE_SHIFT));
++    eng_params.mem.node_mem[hot_node].huge_free = TEST_LIMIT_HOT_FREE_HUGE << HUGE_SHIFT;
++    eng_params.mem.node_mem[cold_node].huge_free = TEST_LIMIT_COLD_FREE_HUGE << HUGE_SHIFT;
++    CU_ASSERT_EQUAL(cslide_policy(&eng_params), 0);
++    CU_ASSERT_EQUAL(page_refs_num(memory_grade->hot_pages), 
++                    TEST_LIMIT_COLD_FREE_HUGE + TEST_LIMIT_HOT_FREE_HUGE);
++    CU_ASSERT_EQUAL(free_hugepage(cold_addr, TEST_LIMIT_COLD_HUGE), 0);
++
++    /* policy no exist task */
++    CU_ASSERT_EQUAL(cslide_do_scan(&eng_params), 0);
++    set_page_count(pid_params, TEST_LOOP, hot_addr, hot_addr + (TEST_HUGEPAGE_NUM << HUGE_SHIFT));
++    pid_params->pid = NO_EXIST_PID;
++    CU_ASSERT_NOT_EQUAL(cslide_policy(&eng_params), 0);
++    cslide_clean_params(&eng_params);
++    pid_params->pid = pid;
++
++    /* clean up */
++    CU_ASSERT_EQUAL(free_hugepage(hot_addr, TEST_HUGEPAGE_NUM), 0);
++}
++
++/* test prefetch cold pages */
++static void test_etmem_cslide_policy_002(void)
++{
++    struct cslide_pid_params *pid_params = NULL;
++    struct cslide_task_params task_params;
++    struct cslide_eng_params eng_params;
++    void *prefetch_addr = NULL;
++    pid_t pid = getpid();
++    struct memory_grade *memory_grade = NULL;
++    int cold_node, hot_node;
++
++    /* init */
++    init_cslide_eng(&g_default_cslide_eng);
++    init_cslide_params(&pid_params, &task_params, &eng_params);
++    cold_node = get_first_cold_node(&g_default_cslide_eng);
++    hot_node = get_first_hot_node(&g_default_cslide_eng);
++    prefetch_addr = get_hugepage(TEST_HUGEPAGE_NUM, cold_node, pid);
++    get_sys_mem(&eng_params.mem);
++
++    /* unlimited prefetch */
++    CU_ASSERT_EQUAL(cslide_do_scan(&eng_params), 0);
++    set_page_count(pid_params, 0, prefetch_addr, prefetch_addr + (TEST_HUGEPAGE_NUM << HUGE_SHIFT));
++    CU_ASSERT_EQUAL(cslide_policy(&eng_params), 0);
++    memory_grade = &pid_params->memory_grade[0];
++    CU_ASSERT_EQUAL(page_refs_num(memory_grade->hot_pages), TEST_HUGEPAGE_NUM);
++    cslide_clean_params(&eng_params);
++
++    /* prefetch is limited by hot_reserve */
++    CU_ASSERT_EQUAL(cslide_do_scan(&eng_params), 0);
++    set_page_count(pid_params, 0, prefetch_addr, prefetch_addr + (TEST_HUGEPAGE_NUM << HUGE_SHIFT));
++    eng_params.hot_reserve = (eng_params.mem.node_mem[hot_node].huge_free >> BYTE_TO_MB_SHIFT) - HUGE_TO_MB;
++    CU_ASSERT_EQUAL(cslide_policy(&eng_params), 0);
++    memory_grade = &pid_params->memory_grade[0];
++    CU_ASSERT_EQUAL(page_refs_num(memory_grade->hot_pages), 1);
++    cslide_clean_params(&eng_params);
++    eng_params.hot_reserve = 0;
++
++    /* prefetch is limited by mig_quota with 1 */
++    CU_ASSERT_EQUAL(cslide_do_scan(&eng_params), 0);
++    set_page_count(pid_params, 0, prefetch_addr, prefetch_addr + ((TEST_HUGEPAGE_NUM / 2) << HUGE_SHIFT));
++    set_page_count(pid_params, 1, prefetch_addr + ((TEST_HUGEPAGE_NUM / 2) << HUGE_SHIFT), 
++                   prefetch_addr + (TEST_HUGEPAGE_NUM << HUGE_SHIFT));
++    eng_params.mig_quota = TEST_LIMIT_HUGE * HUGE_TO_MB;
++    CU_ASSERT_EQUAL(cslide_policy(&eng_params), 0);
++    memory_grade = &pid_params->memory_grade[0];
++    CU_ASSERT_EQUAL(page_refs_num(memory_grade->hot_pages), TEST_LIMIT_HUGE);
++    cslide_clean_params(&eng_params);
++    eng_params.mig_quota = DEFAULT_MIG_QUOTA;
++
++    /* clean up */
++    CU_ASSERT_EQUAL(free_hugepage(prefetch_addr, TEST_HUGEPAGE_NUM), 0);
++}
++
++static void test_etmem_cslide_policy_003(void)
++{
++    struct cslide_pid_params *pid_params = NULL;
++    struct cslide_task_params task_params;
++    struct cslide_eng_params eng_params;
++    void *cold_addr = NULL;
++    pid_t pid = getpid();
++    struct memory_grade *memory_grade = NULL;
++    int cold_node, hot_node;
++
++    /* init */
++    init_cslide_eng(&g_default_cslide_eng);
++    init_cslide_params(&pid_params, &task_params, &eng_params);
++    cold_node = get_first_cold_node(&g_default_cslide_eng);
++    hot_node = get_first_hot_node(&g_default_cslide_eng);
++    cold_addr = get_hugepage(TEST_HUGEPAGE_NUM, hot_node, pid);
++    get_sys_mem(&eng_params.mem);
++    eng_params.hot_reserve = eng_params.mem.node_mem[hot_node].huge_total >> BYTE_TO_MB_SHIFT;
++
++    /* unlimited cold move */
++    CU_ASSERT_EQUAL(cslide_do_scan(&eng_params), 0);
++    set_page_count(pid_params, 0, cold_addr, cold_addr + (TEST_HUGEPAGE_NUM << HUGE_SHIFT));
++    CU_ASSERT_EQUAL(cslide_policy(&eng_params), 0);
++    memory_grade = &pid_params->memory_grade[0];
++    CU_ASSERT_EQUAL(page_refs_num(memory_grade->cold_pages), TEST_HUGEPAGE_NUM);
++    cslide_clean_params(&eng_params);
++
++    /* cold move is limited by mig_quota with 1 */
++    CU_ASSERT_EQUAL(cslide_do_scan(&eng_params), 0);
++    set_page_count(pid_params, 0, cold_addr, cold_addr + ((TEST_HUGEPAGE_NUM / 2) << HUGE_SHIFT));
++    set_page_count(pid_params, 1, cold_addr + ((TEST_HUGEPAGE_NUM / 2) << HUGE_SHIFT), 
++                   cold_addr + (TEST_HUGEPAGE_NUM << HUGE_SHIFT));
++    eng_params.mig_quota = TEST_LIMIT_HUGE * HUGE_TO_MB;
++    CU_ASSERT_EQUAL(cslide_policy(&eng_params), 0);
++    memory_grade = &pid_params->memory_grade[0];
++    CU_ASSERT_EQUAL(page_refs_num(memory_grade->cold_pages), TEST_LIMIT_HUGE);
++    cslide_clean_params(&eng_params);
++    eng_params.mig_quota = DEFAULT_MIG_QUOTA;
++
++    /* cold move is limited by free space in cold node */
++    CU_ASSERT_EQUAL(cslide_do_scan(&eng_params), 0);
++    set_page_count(pid_params, 0, cold_addr, cold_addr + (TEST_HUGEPAGE_NUM << HUGE_SHIFT));
++    eng_params.mem.node_mem[cold_node].huge_free = TEST_LIMIT_COLD_HUGE << HUGE_SHIFT;
++    CU_ASSERT_EQUAL(cslide_policy(&eng_params), 0);
++    memory_grade = &pid_params->memory_grade[0];
++    CU_ASSERT_EQUAL(page_refs_num(memory_grade->cold_pages), TEST_LIMIT_COLD_HUGE);
++    cslide_clean_params(&eng_params);
++
++    /* clean up */
++    CU_ASSERT_EQUAL(free_hugepage(cold_addr, TEST_HUGEPAGE_NUM), 0);
++}
++
++static void do_test_cslide_query(void)
++{
++    char cmd[MAX_CMD];
++
++    init_cslide_eng(&g_default_cslide_eng);
++    if (snprintf_s(cmd, MAX_CMD, MAX_CMD - 1, "sh ../etmem_cslide_ops_llt_test/cslide_showpage_test.sh \"%s\"",
++                   g_default_cslide_eng.node_pair) <= 0) {
++        CU_FAIL("snprintf_s fail");
++        return;
++    }
++    printf("run %s\n", cmd);
++    CU_ASSERT_EQUAL(system(cmd), 0);
++}
++
++/* test query task page info */
++static void test_etmem_cslide_query_001(void)
++{
++    do_test_cslide_query();
++}
++
++/* test query host page info */
++static void test_etmem_cslide_query_002(void)
++{
++    do_test_cslide_query();
++}
++
++static void test_etmem_cslide_mig_001(void)
++{
++    struct cslide_pid_params *pid_params = NULL;
++    struct cslide_task_params task_params;
++    struct cslide_eng_params eng_params;
++    void *hot_addr = NULL;
++    pid_t pid = getpid();
++    struct memory_grade *memory_grade = NULL;
++    int cold_node, hot_node;
++
++    /* init */
++    init_cslide_eng(&g_default_cslide_eng);
++    init_cslide_params(&pid_params, &task_params, &eng_params);
++    cold_node = get_first_cold_node(&g_default_cslide_eng);
++    hot_node = get_first_hot_node(&g_default_cslide_eng);
++    get_sys_mem(&eng_params.mem);
++
++    /* move hot pages normally */
++    hot_addr = get_hugepage(TEST_HUGEPAGE_NUM, cold_node, pid);
++    CU_ASSERT_EQUAL(cslide_do_scan(&eng_params), 0);
++    set_page_count(pid_params, TEST_LOOP, hot_addr, hot_addr + (TEST_HUGEPAGE_NUM << HUGE_SHIFT));
++    CU_ASSERT_EQUAL(cslide_policy(&eng_params), 0);
++    memory_grade = &pid_params->memory_grade[0];
++    CU_ASSERT_EQUAL(page_refs_num(memory_grade->hot_pages), TEST_HUGEPAGE_NUM);
++    CU_ASSERT_EQUAL(cslide_do_migrate(&eng_params), 0);
++    CU_ASSERT_EQUAL(check_addr_node(hot_addr, pid, hot_node, TEST_HUGEPAGE_NUM), 0);
++    cslide_clean_params(&eng_params);
++    CU_ASSERT_EQUAL(free_hugepage(hot_addr, TEST_HUGEPAGE_NUM), 0);
++}
++
++static void test_etmem_cslide_mig_002(void)
++{
++    struct cslide_pid_params *pid_params = NULL;
++    struct cslide_task_params task_params;
++    struct cslide_eng_params eng_params;
++    void *hot_addr = NULL;
++    pid_t pid = getpid();
++    struct memory_grade *memory_grade = NULL;
++    int cold_node, hot_node;
++
++    /* init */
++    init_cslide_eng(&g_default_cslide_eng);
++    init_cslide_params(&pid_params, &task_params, &eng_params);
++    cold_node = get_first_cold_node(&g_default_cslide_eng);
++    hot_node = get_first_hot_node(&g_default_cslide_eng);
++    get_sys_mem(&eng_params.mem);
++
++    /* move hot pages with no exist task */
++    hot_addr = get_hugepage(TEST_HUGEPAGE_NUM, cold_node, pid);
++    CU_ASSERT_EQUAL(cslide_do_scan(&eng_params), 0);
++    set_page_count(pid_params, TEST_LOOP, hot_addr, hot_addr + (TEST_HUGEPAGE_NUM << HUGE_SHIFT));
++    CU_ASSERT_EQUAL(cslide_policy(&eng_params), 0);
++    memory_grade = &pid_params->memory_grade[0];
++    CU_ASSERT_EQUAL(page_refs_num(memory_grade->hot_pages), TEST_HUGEPAGE_NUM);
++    pid_params->pid = NO_EXIST_PID;
++    CU_ASSERT_NOT_EQUAL(cslide_do_migrate(&eng_params), 0);
++    cslide_clean_params(&eng_params);
++    CU_ASSERT_EQUAL(free_hugepage(hot_addr, TEST_HUGEPAGE_NUM), 0);
++    pid_params->pid = pid;
++}
++
++static void test_etmem_cslide_mig_003(void)
++{
++    struct cslide_pid_params *pid_params = NULL;
++    struct cslide_task_params task_params;
++    struct cslide_eng_params eng_params;
++    void *cold_addr = NULL;
++    pid_t pid = getpid();
++    struct memory_grade *memory_grade = NULL;
++    int cold_node, hot_node;
++
++    /* init */
++    init_cslide_eng(&g_default_cslide_eng);
++    init_cslide_params(&pid_params, &task_params, &eng_params);
++    cold_node = get_first_cold_node(&g_default_cslide_eng);
++    hot_node = get_first_hot_node(&g_default_cslide_eng);
++    get_sys_mem(&eng_params.mem);
++    eng_params.hot_reserve = eng_params.mem.node_mem[hot_node].huge_total >> BYTE_TO_MB_SHIFT;
++
++    /* move cold pages normally */
++    cold_addr = get_hugepage(TEST_HUGEPAGE_NUM, hot_node, pid);
++    get_sys_mem(&eng_params.mem);
++    CU_ASSERT_EQUAL(cslide_do_scan(&eng_params), 0);
++    set_page_count(pid_params, 0, cold_addr, cold_addr + (TEST_HUGEPAGE_NUM << HUGE_SHIFT));
++    CU_ASSERT_EQUAL(cslide_policy(&eng_params), 0);
++    memory_grade = &pid_params->memory_grade[0];
++    CU_ASSERT_EQUAL(page_refs_num(memory_grade->cold_pages), TEST_HUGEPAGE_NUM);
++    CU_ASSERT_EQUAL(cslide_do_migrate(&eng_params), 0);
++    CU_ASSERT_EQUAL(check_addr_node(cold_addr, pid, cold_node, TEST_HUGEPAGE_NUM), 0);
++    cslide_clean_params(&eng_params);
++    CU_ASSERT_EQUAL(free_hugepage(cold_addr, TEST_HUGEPAGE_NUM), 0);
++}
++
++static void test_etmem_cslide_mig_004(void)
++{
++    struct cslide_pid_params *pid_params = NULL;
++    struct cslide_task_params task_params;
++    struct cslide_eng_params eng_params;
++    void *cold_addr = NULL;
++    pid_t pid = getpid();
++    struct memory_grade *memory_grade = NULL;
++    int cold_node, hot_node;
++
++    /* init */
++    init_cslide_eng(&g_default_cslide_eng);
++    init_cslide_params(&pid_params, &task_params, &eng_params);
++    cold_node = get_first_cold_node(&g_default_cslide_eng);
++    hot_node = get_first_hot_node(&g_default_cslide_eng);
++    get_sys_mem(&eng_params.mem);
++    eng_params.hot_reserve = eng_params.mem.node_mem[hot_node].huge_total >> BYTE_TO_MB_SHIFT;
++
++    /* move cold pages with no exist task */
++    cold_addr = get_hugepage(TEST_HUGEPAGE_NUM, hot_node, pid);
++    get_sys_mem(&eng_params.mem);
++    CU_ASSERT_EQUAL(cslide_do_scan(&eng_params), 0);
++    set_page_count(pid_params, 0, cold_addr, cold_addr + (TEST_HUGEPAGE_NUM << HUGE_SHIFT));
++    CU_ASSERT_EQUAL(cslide_policy(&eng_params), 0);
++    memory_grade = &pid_params->memory_grade[0];
++    CU_ASSERT_EQUAL(page_refs_num(memory_grade->cold_pages), TEST_HUGEPAGE_NUM);
++    pid_params->pid = NO_EXIST_PID;
++    CU_ASSERT_NOT_EQUAL(cslide_do_migrate(&eng_params), 0);
++    cslide_clean_params(&eng_params);
++    CU_ASSERT_EQUAL(free_hugepage(cold_addr, TEST_HUGEPAGE_NUM), 0);
++    pid_params->pid = pid;
++}
++
++static int init_env(void)
++{
++    if (init_g_page_size() != 0) {
++        return -1;
++    }
++    if (init_hugepage() != 0) {
++        return -1;
++    }
++
++    return 0;
++}
++
++typedef enum {
++    CUNIT_SCREEN = 0,
++    CUNIT_XMLFILE,
++    CUNIT_CONSOLE
++} cu_run_mode;
++
++int main(int argc, const char **argv)
++{
++    CU_pSuite suite;
++    CU_pTest pTest;
++    unsigned int num_failures;
++    cu_run_mode cunit_mode = CUNIT_SCREEN;
++    int error_num;
++
++    if (argc > 1) {
++        cunit_mode = atoi(argv[1]);
++    }
++
++    if (CU_initialize_registry() != CUE_SUCCESS) {
++        return -CU_get_error();
++    }
++
++    suite = CU_add_suite("etmem_cslide_ops", init_env, NULL);
++    if (suite == NULL) {
++        goto ERROR;
++    }
++
++    if (CU_ADD_TEST(suite, test_etmem_cslide_policy_001) == NULL ||
++        CU_ADD_TEST(suite, test_etmem_cslide_policy_002) == NULL ||
++        CU_ADD_TEST(suite, test_etmem_cslide_policy_003) == NULL ||
++        CU_ADD_TEST(suite, test_etmem_cslide_query_001) == NULL ||
++        CU_ADD_TEST(suite, test_etmem_cslide_query_002) == NULL ||
++        CU_ADD_TEST(suite, test_etmem_cslide_mig_001) == NULL ||
++        CU_ADD_TEST(suite, test_etmem_cslide_mig_002) == NULL ||
++        CU_ADD_TEST(suite, test_etmem_cslide_mig_003) == NULL ||
++        CU_ADD_TEST(suite, test_etmem_cslide_mig_004) == NULL ||
++        CU_ADD_TEST(suite, test_etmem_add_cslide_0001) == NULL ||
++        CU_ADD_TEST(suite, test_etmem_add_cslide_0002) == NULL ||
++        CU_ADD_TEST(suite, test_etmem_del_cslide_0001) == NULL ||
++        CU_ADD_TEST(suite, test_etmem_del_cslide_0002) == NULL ||
++        CU_ADD_TEST(suite, test_etmem_add_task_0001) == NULL ||
++        CU_ADD_TEST(suite, test_etmem_add_task_0002) == NULL ||
++        CU_ADD_TEST(suite, test_etmem_del_task_0001) == NULL ||
++        CU_ADD_TEST(suite, test_etmem_del_task_0002) == NULL) {
++            printf("CU_ADD_TEST fail. \n");
++            goto ERROR;
++    }
++
++    switch (cunit_mode) {
++        case CUNIT_SCREEN:
++            CU_basic_set_mode(CU_BRM_VERBOSE);
++            CU_basic_run_tests();
++            break;
++        case CUNIT_XMLFILE:
++            CU_set_output_filename("etmemd_cslide.c");
++            CU_automated_run_tests();
++            break;
++        case CUNIT_CONSOLE:
++            CU_console_run_tests();
++            break;
++        default:
++            printf("not support cunit mode, only support: "
++                   "0 for CUNIT_SCREEN, 1 for CUNIT_XMLFILE, 2 for CUNIT_CONSOLE\n");
++            goto ERROR;
++    }
++
++    num_failures = CU_get_number_of_failures();
++    CU_cleanup_registry();
++    return num_failures;
++
++ERROR:
++    error_num = CU_get_error();
++    CU_cleanup_registry();
++    return -error_num;
++}
+diff --git a/etmem/test/etmem_cslide_ops_llt_test/mem_access.c b/etmem/test/etmem_cslide_ops_llt_test/mem_access.c
+new file mode 100644
+index 0000000..56ad47e
+--- /dev/null
++++ b/etmem/test/etmem_cslide_ops_llt_test/mem_access.c
+@@ -0,0 +1,90 @@
++/******************************************************************************
++ * Copyright (c) Huawei Technologies Co., Ltd. 2019-2021. All rights reserved.
++ * etmem is licensed under the Mulan PSL v2.
++ * You can use this software according to the terms and conditions of the Mulan PSL v2.
++ * You may obtain a copy of Mulan PSL v2 at:
++ * http://license.coscl.org.cn/MulanPSL2
++ * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR
++ * IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY OR FIT FOR A PARTICULAR
++ * PURPOSE.
++ * See the Mulan PSL v2 for more details.
++ * Author: shikemeng
++ * Create: 2021-11-29
++ * Description: construct a progress test for etmemd cslide engine
++ ******************************************************************************/
++
++#include <numaif.h>
++#include <sys/mman.h>
++#include <stdio.h>
++#include <unistd.h>
++#include <stdlib.h>
++#include <string.h>
++#include <stdint.h>
++
++#define FLAGS               (MAP_PRIVATE | MAP_ANONYMOUS | MAP_HUGETLB)
++#define PROTECTION          (PROT_READ | PROT_WRITE)
++#define PATH_MAX            1024
++#define BYTE_TO_MB_SHIFT    20
++#define SLEEP_TIME          1000
++
++void *mmap_hugepage(size_t len)
++{
++    return mmap(NULL, len, PROTECTION, FLAGS, -1, 0);
++}
++
++void fill_random(void *addr, size_t len)
++{
++    size_t i;
++    for (i = 0; i < len / sizeof(int); i++) {
++        ((int *)addr)[i] = rand();
++    }
++}
++
++int main(int argc, char **argv)
++{
++    void *src_addr = NULL;
++    void *dst_addr = NULL;
++    unsigned long nodemask;
++    uint64_t start, end, total = 0;
++    int time = 1;
++    int i;
++    char c;
++    long ret;
++    int dst_node;
++    long long len;
++    size_t j;
++    int is_busy;
++
++    if (argc > 3) {
++        dst_node = atoi(argv[1]);
++        len = (long long)atoi(argv[2] << BYTE_TO_MB_SHIFT);
++        is_busy = atoi(argv[3]);
++    } else {
++        printf("%s node size(MB) is busy\n", argv[0]);
++        return -1;
++    }
++
++    nodemask = (unsigned long)1 << dst_node;
++    if ((ret = set_mempolicy(MPOL_BIND, &nodemask, 8)) != 0) {
++        printf("set_mempolicy for aep fail with %ld\n", ret);
++        return -1;
++    }
++
++    dst_addr = mmap_hugepage(len);
++    if (dst_addr == NULL) {
++        printf("mmap fail\n");
++        return -1;
++    }
++    fill_random(dst_addr, len);
++    printf("finish page fault\n");
++
++    if (!is_busy) {
++        sleep(SLEEP_TIME);
++    }
++
++    while (1) {
++        fill_random(dst_addr, len);
++    }
++
++    return 0;
++}
+diff --git a/etmem/test/etmem_migrate_ops_llt/CMakeLists.txt b/etmem/test/etmem_migrate_ops_llt/CMakeLists.txt
+deleted file mode 100644
+index d998af7..0000000
+--- a/etmem/test/etmem_migrate_ops_llt/CMakeLists.txt
++++ /dev/null
+@@ -1,27 +0,0 @@
+-# /******************************************************************************
+-#  * Copyright (c) Huawei Technologies Co., Ltd. 2019-2021. All rights reserved.
+-#  * etmem is licensed under the Mulan PSL v2.
+-#  * You can use this software according to the terms and conditions of the Mulan PSL v2.
+-#  * You may obtain a copy of Mulan PSL v2 at:
+-#  *     http://license.coscl.org.cn/MulanPSL2
+-#  * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR
+-#  * IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY OR FIT FOR A PARTICULAR
+-#  * PURPOSE.
+-#  * See the Mulan PSL v2 for more details.
+-#  * Author: liubo
+-#  * Create: 2021-12-10
+-#  * Description: CMakefileList for etmem_migrate_ops_llt to compile
+-#  ******************************************************************************/
+-
+-project(etmem)
+-
+-INCLUDE_DIRECTORIES(../../inc/etmem_inc)
+-INCLUDE_DIRECTORIES(../../inc/etmemd_inc)
+-INCLUDE_DIRECTORIES(${GLIB2_INCLUDE_DIRS})
+-
+-SET(EXE etmem_migrate_ops_llt)
+-
+-add_executable(${EXE} etmem_migrate_ops_llt.c)
+-
+-set_target_properties(${EXE} PROPERTIES LINK_FLAGS "-Wl,--wrap,get_mem_from_proc_file")
+-target_link_libraries(${EXE} cunit ${BUILD_DIR}/lib/libetmemd.so pthread dl rt boundscheck numa ${GLIB2_LIBRARIES})
+diff --git a/etmem/test/etmem_migrate_ops_llt/etmem_migrate_ops_llt.c b/etmem/test/etmem_migrate_ops_llt/etmem_migrate_ops_llt.c
+deleted file mode 100644
+index 5c9b0d4..0000000
+--- a/etmem/test/etmem_migrate_ops_llt/etmem_migrate_ops_llt.c
++++ /dev/null
+@@ -1,225 +0,0 @@
+-/******************************************************************************
+- * Copyright (c) Huawei Technologies Co., Ltd. 2019-2021. All rights reserved.
+- * etmem is licensed under the Mulan PSL v2.
+- * You can use this software according to the terms and conditions of the Mulan PSL v2.
+- * You may obtain a copy of Mulan PSL v2 at:
+- * http://license.coscl.org.cn/MulanPSL2
+- * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR
+- * IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY OR FIT FOR A PARTICULAR
+- * PURPOSE.
+- * See the Mulan PSL v2 for more details.
+- * Author: liubo
+- * Create: 2021-08-14
+- * Description: This is a source file of the unit test for log functions in etmem.
+- ******************************************************************************/
+-
+-#include <sys/file.h>
+-#include <stdio.h>
+-#include <stdlib.h>
+-#include <string.h>
+-
+-#include "etmemd.h"
+-#include "etmemd_migrate.h"
+-#include "etmemd_scan.h"
+-#include "etmemd_project_exp.h"
+-#include "etmemd_engine_exp.h"
+-#include "etmemd_task_exp.h"
+-#include "etmemd_task.h"
+-
+-#include <CUnit/Basic.h>
+-#include <CUnit/Automated.h>
+-#include <CUnit/Console.h>
+-
+-#define WATER_LINE_TEMP 2
+-
+-/* Function replacement used for mock test. This function is used only in dt. */
+-int get_mem_from_proc_file(const char *pid, const char *file_name,
+-                           unsigned long *data, const char *cmpstr)
+-{
+-    *data = 100;
+-    return 0;
+-}
+-
+-void init_task_pid_param(struct task_pid *param)
+-{
+-    param->pid = 1;
+-    param->rt_swapin_rate = 0.0;
+-    param->params = NULL;
+-    param->next = NULL;
+-}
+-
+-static struct memory_grade *get_memory_grade(void)
+-{
+-    struct memory_grade *memory_grade = NULL;
+-    struct vmas *vmas = NULL;
+-    struct page_refs *page_refs = NULL;
+-    const char *pid = "1";
+-
+-    init_g_page_size();
+-    vmas = get_vmas(pid);
+-    CU_ASSERT_PTR_NOT_NULL(vmas);
+-    CU_ASSERT_EQUAL(get_page_refs(vmas, pid, &page_refs, NULL, NULL), 0);
+-    free(vmas);
+-    vmas = NULL;
+-
+-    memory_grade = (struct memory_grade *)calloc(1, sizeof(struct memory_grade));
+-    CU_ASSERT_PTR_NOT_NULL(memory_grade);
+-
+-    while (page_refs != NULL) {
+-        if ((page_refs)->count >= WATER_LINE_TEMP) {
+-            page_refs = add_page_refs_into_memory_grade(page_refs, &memory_grade->hot_pages);
+-            continue;
+-        }
+-        page_refs = add_page_refs_into_memory_grade(page_refs, &memory_grade->cold_pages);
+-    }
+-
+-    return memory_grade;
+-}
+-
+-static void test_etmem_migrate_error(void)
+-{
+-    struct memory_grade *memory_grade = NULL;
+-
+-    memory_grade = (struct memory_grade *)calloc(1, sizeof(struct memory_grade));
+-    CU_ASSERT_PTR_NOT_NULL(memory_grade);
+-
+-    CU_ASSERT_EQUAL(etmemd_grade_migrate("", memory_grade), 0);
+-    CU_ASSERT_EQUAL(etmemd_grade_migrate("no123", memory_grade), 0);
+-
+-    free(memory_grade);
+-
+-    memory_grade = get_memory_grade();
+-    CU_ASSERT_PTR_NOT_NULL(memory_grade);
+-    CU_ASSERT_EQUAL(etmemd_grade_migrate("", memory_grade), -1);
+-    CU_ASSERT_EQUAL(etmemd_grade_migrate("no123", memory_grade), -1);
+-
+-    clean_memory_grade_unexpected(&memory_grade);
+-    CU_ASSERT_PTR_NULL(memory_grade);
+-}
+-
+-static void test_etmem_migrate_ok(void)
+-{
+-    struct memory_grade *memory_grade = NULL;
+-
+-    memory_grade = get_memory_grade();
+-    CU_ASSERT_PTR_NOT_NULL(memory_grade);
+-    CU_ASSERT_EQUAL(etmemd_grade_migrate("1", memory_grade), 0);
+-
+-    clean_memory_grade_unexpected(&memory_grade);
+-    CU_ASSERT_PTR_NULL(memory_grade);
+-}
+-
+-static void test_etmemd_reclaim_swapcache_error(void)
+-{
+-    struct project proj = {0};
+-    struct engine eng = {0};
+-    struct task tk = {0};
+-    struct task_pid tk_pid = {0};
+-
+-    proj.swapcache_high_wmark = 5;
+-    proj.swapcache_low_wmark = 3;
+-    tk_pid.tk = &tk;
+-    tk.eng = &eng;
+-    eng.proj = &proj;
+-
+-    CU_ASSERT_EQUAL(etmemd_reclaim_swapcache(NULL), -1);
+-
+-    init_task_pid_param(&tk_pid);
+-    tk_pid.pid = 0;
+-    proj.wmark_set = false;
+-    CU_ASSERT_EQUAL(etmemd_reclaim_swapcache(&tk_pid), -1);
+-
+-    tk_pid.pid = 0;
+-    proj.wmark_set = true;
+-    CU_ASSERT_EQUAL(etmemd_reclaim_swapcache(&tk_pid), -1);
+-}
+-
+-static void test_etmemd_reclaim_swapcache_ok(void)
+-{
+-    struct project proj = {0};
+-    struct engine eng = {0};
+-    struct task tk = {0};
+-    struct task_pid tk_pid = {0};
+-
+-    tk_pid.tk = &tk;
+-    tk.eng = &eng;
+-    eng.proj = &proj;
+-
+-    init_task_pid_param(&tk_pid);
+-    proj.swapcache_high_wmark = -1;
+-    proj.swapcache_low_wmark = -1;
+-    CU_ASSERT_EQUAL(etmemd_reclaim_swapcache(&tk_pid), 0);
+-
+-    proj.swapcache_high_wmark = 100;
+-    proj.swapcache_low_wmark = 3;
+-    CU_ASSERT_EQUAL(etmemd_reclaim_swapcache(&tk_pid), 0);
+-
+-    init_task_pid_param(&tk_pid);
+-    proj.swapcache_high_wmark = 5;
+-    proj.swapcache_low_wmark = 3;
+-    proj.wmark_set = false;
+-    CU_ASSERT_EQUAL(etmemd_reclaim_swapcache(&tk_pid), 0);
+-}
+-
+-typedef enum {
+-    CUNIT_SCREEN = 0,
+-    CUNIT_XMLFILE,
+-    CUNIT_CONSOLE
+-} cu_run_mode;
+-
+-int main(int argc, const char **argv)
+-{
+-    CU_pSuite suite;
+-    CU_pTest pTest;
+-    unsigned int num_failures;
+-    cu_run_mode cunit_mode = CUNIT_SCREEN;
+-    int error_num;
+-
+-    if (argc > 1) {
+-        cunit_mode = atoi(argv[1]);
+-    }
+-
+-    if (CU_initialize_registry() != CUE_SUCCESS) {
+-        return -CU_get_error();
+-    }
+-
+-    suite = CU_add_suite("etmem_migrate_ops", NULL, NULL);
+-    if (suite == NULL) {
+-        goto ERROR;
+-    }
+-
+-    if (CU_ADD_TEST(suite, test_etmem_migrate_error) == NULL ||
+-        CU_ADD_TEST(suite, test_etmem_migrate_ok) == NULL ||
+-        CU_ADD_TEST(suite, test_etmemd_reclaim_swapcache_error) == NULL ||
+-        CU_ADD_TEST(suite, test_etmemd_reclaim_swapcache_ok) == NULL) {
+-            printf("CU_ADD_TEST fail. \n");
+-            goto ERROR;
+-    }
+-
+-    switch (cunit_mode) {
+-        case CUNIT_SCREEN:
+-            CU_basic_set_mode(CU_BRM_VERBOSE);
+-            CU_basic_run_tests();
+-            break;
+-        case CUNIT_XMLFILE:
+-            CU_set_output_filename("etmemd_migrate.c");
+-            CU_automated_run_tests();
+-            break;
+-        case CUNIT_CONSOLE:
+-            CU_console_run_tests();
+-            break;
+-        default:
+-            printf("not support cunit mode, only support: "
+-                   "0 for CUNIT_SCREEN, 1 for CUNIT_XMLFILE, 2 for CUNIT_CONSOLE\n");
+-            goto ERROR;
+-    }
+-
+-    num_failures = CU_get_number_of_failures();
+-    CU_cleanup_registry();
+-    return num_failures;
+-
+-ERROR:
+-    error_num = CU_get_error();
+-    CU_cleanup_registry();
+-    return -error_num;
+-}
+diff --git a/etmem/test/etmem_migrate_ops_llt_test/CMakeLists.txt b/etmem/test/etmem_migrate_ops_llt_test/CMakeLists.txt
+new file mode 100644
+index 0000000..d998af7
+--- /dev/null
++++ b/etmem/test/etmem_migrate_ops_llt_test/CMakeLists.txt
+@@ -0,0 +1,27 @@
++# /******************************************************************************
++#  * Copyright (c) Huawei Technologies Co., Ltd. 2019-2021. All rights reserved.
++#  * etmem is licensed under the Mulan PSL v2.
++#  * You can use this software according to the terms and conditions of the Mulan PSL v2.
++#  * You may obtain a copy of Mulan PSL v2 at:
++#  *     http://license.coscl.org.cn/MulanPSL2
++#  * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR
++#  * IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY OR FIT FOR A PARTICULAR
++#  * PURPOSE.
++#  * See the Mulan PSL v2 for more details.
++#  * Author: liubo
++#  * Create: 2021-12-10
++#  * Description: CMakefileList for etmem_migrate_ops_llt to compile
++#  ******************************************************************************/
++
++project(etmem)
++
++INCLUDE_DIRECTORIES(../../inc/etmem_inc)
++INCLUDE_DIRECTORIES(../../inc/etmemd_inc)
++INCLUDE_DIRECTORIES(${GLIB2_INCLUDE_DIRS})
++
++SET(EXE etmem_migrate_ops_llt)
++
++add_executable(${EXE} etmem_migrate_ops_llt.c)
++
++set_target_properties(${EXE} PROPERTIES LINK_FLAGS "-Wl,--wrap,get_mem_from_proc_file")
++target_link_libraries(${EXE} cunit ${BUILD_DIR}/lib/libetmemd.so pthread dl rt boundscheck numa ${GLIB2_LIBRARIES})
+diff --git a/etmem/test/etmem_migrate_ops_llt_test/etmem_migrate_ops_llt.c b/etmem/test/etmem_migrate_ops_llt_test/etmem_migrate_ops_llt.c
+new file mode 100644
+index 0000000..5c9b0d4
+--- /dev/null
++++ b/etmem/test/etmem_migrate_ops_llt_test/etmem_migrate_ops_llt.c
+@@ -0,0 +1,225 @@
++/******************************************************************************
++ * Copyright (c) Huawei Technologies Co., Ltd. 2019-2021. All rights reserved.
++ * etmem is licensed under the Mulan PSL v2.
++ * You can use this software according to the terms and conditions of the Mulan PSL v2.
++ * You may obtain a copy of Mulan PSL v2 at:
++ * http://license.coscl.org.cn/MulanPSL2
++ * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR
++ * IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY OR FIT FOR A PARTICULAR
++ * PURPOSE.
++ * See the Mulan PSL v2 for more details.
++ * Author: liubo
++ * Create: 2021-08-14
++ * Description: This is a source file of the unit test for log functions in etmem.
++ ******************************************************************************/
++
++#include <sys/file.h>
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++
++#include "etmemd.h"
++#include "etmemd_migrate.h"
++#include "etmemd_scan.h"
++#include "etmemd_project_exp.h"
++#include "etmemd_engine_exp.h"
++#include "etmemd_task_exp.h"
++#include "etmemd_task.h"
++
++#include <CUnit/Basic.h>
++#include <CUnit/Automated.h>
++#include <CUnit/Console.h>
++
++#define WATER_LINE_TEMP 2
++
++/* Function replacement used for mock test. This function is used only in dt. */
++int get_mem_from_proc_file(const char *pid, const char *file_name,
++                           unsigned long *data, const char *cmpstr)
++{
++    *data = 100;
++    return 0;
++}
++
++void init_task_pid_param(struct task_pid *param)
++{
++    param->pid = 1;
++    param->rt_swapin_rate = 0.0;
++    param->params = NULL;
++    param->next = NULL;
++}
++
++static struct memory_grade *get_memory_grade(void)
++{
++    struct memory_grade *memory_grade = NULL;
++    struct vmas *vmas = NULL;
++    struct page_refs *page_refs = NULL;
++    const char *pid = "1";
++
++    init_g_page_size();
++    vmas = get_vmas(pid);
++    CU_ASSERT_PTR_NOT_NULL(vmas);
++    CU_ASSERT_EQUAL(get_page_refs(vmas, pid, &page_refs, NULL, NULL), 0);
++    free(vmas);
++    vmas = NULL;
++
++    memory_grade = (struct memory_grade *)calloc(1, sizeof(struct memory_grade));
++    CU_ASSERT_PTR_NOT_NULL(memory_grade);
++
++    while (page_refs != NULL) {
++        if ((page_refs)->count >= WATER_LINE_TEMP) {
++            page_refs = add_page_refs_into_memory_grade(page_refs, &memory_grade->hot_pages);
++            continue;
++        }
++        page_refs = add_page_refs_into_memory_grade(page_refs, &memory_grade->cold_pages);
++    }
++
++    return memory_grade;
++}
++
++static void test_etmem_migrate_error(void)
++{
++    struct memory_grade *memory_grade = NULL;
++
++    memory_grade = (struct memory_grade *)calloc(1, sizeof(struct memory_grade));
++    CU_ASSERT_PTR_NOT_NULL(memory_grade);
++
++    CU_ASSERT_EQUAL(etmemd_grade_migrate("", memory_grade), 0);
++    CU_ASSERT_EQUAL(etmemd_grade_migrate("no123", memory_grade), 0);
++
++    free(memory_grade);
++
++    memory_grade = get_memory_grade();
++    CU_ASSERT_PTR_NOT_NULL(memory_grade);
++    CU_ASSERT_EQUAL(etmemd_grade_migrate("", memory_grade), -1);
++    CU_ASSERT_EQUAL(etmemd_grade_migrate("no123", memory_grade), -1);
++
++    clean_memory_grade_unexpected(&memory_grade);
++    CU_ASSERT_PTR_NULL(memory_grade);
++}
++
++static void test_etmem_migrate_ok(void)
++{
++    struct memory_grade *memory_grade = NULL;
++
++    memory_grade = get_memory_grade();
++    CU_ASSERT_PTR_NOT_NULL(memory_grade);
++    CU_ASSERT_EQUAL(etmemd_grade_migrate("1", memory_grade), 0);
++
++    clean_memory_grade_unexpected(&memory_grade);
++    CU_ASSERT_PTR_NULL(memory_grade);
++}
++
++static void test_etmemd_reclaim_swapcache_error(void)
++{
++    struct project proj = {0};
++    struct engine eng = {0};
++    struct task tk = {0};
++    struct task_pid tk_pid = {0};
++
++    proj.swapcache_high_wmark = 5;
++    proj.swapcache_low_wmark = 3;
++    tk_pid.tk = &tk;
++    tk.eng = &eng;
++    eng.proj = &proj;
++
++    CU_ASSERT_EQUAL(etmemd_reclaim_swapcache(NULL), -1);
++
++    init_task_pid_param(&tk_pid);
++    tk_pid.pid = 0;
++    proj.wmark_set = false;
++    CU_ASSERT_EQUAL(etmemd_reclaim_swapcache(&tk_pid), -1);
++
++    tk_pid.pid = 0;
++    proj.wmark_set = true;
++    CU_ASSERT_EQUAL(etmemd_reclaim_swapcache(&tk_pid), -1);
++}
++
++static void test_etmemd_reclaim_swapcache_ok(void)
++{
++    struct project proj = {0};
++    struct engine eng = {0};
++    struct task tk = {0};
++    struct task_pid tk_pid = {0};
++
++    tk_pid.tk = &tk;
++    tk.eng = &eng;
++    eng.proj = &proj;
++
++    init_task_pid_param(&tk_pid);
++    proj.swapcache_high_wmark = -1;
++    proj.swapcache_low_wmark = -1;
++    CU_ASSERT_EQUAL(etmemd_reclaim_swapcache(&tk_pid), 0);
++
++    proj.swapcache_high_wmark = 100;
++    proj.swapcache_low_wmark = 3;
++    CU_ASSERT_EQUAL(etmemd_reclaim_swapcache(&tk_pid), 0);
++
++    init_task_pid_param(&tk_pid);
++    proj.swapcache_high_wmark = 5;
++    proj.swapcache_low_wmark = 3;
++    proj.wmark_set = false;
++    CU_ASSERT_EQUAL(etmemd_reclaim_swapcache(&tk_pid), 0);
++}
++
++typedef enum {
++    CUNIT_SCREEN = 0,
++    CUNIT_XMLFILE,
++    CUNIT_CONSOLE
++} cu_run_mode;
++
++int main(int argc, const char **argv)
++{
++    CU_pSuite suite;
++    CU_pTest pTest;
++    unsigned int num_failures;
++    cu_run_mode cunit_mode = CUNIT_SCREEN;
++    int error_num;
++
++    if (argc > 1) {
++        cunit_mode = atoi(argv[1]);
++    }
++
++    if (CU_initialize_registry() != CUE_SUCCESS) {
++        return -CU_get_error();
++    }
++
++    suite = CU_add_suite("etmem_migrate_ops", NULL, NULL);
++    if (suite == NULL) {
++        goto ERROR;
++    }
++
++    if (CU_ADD_TEST(suite, test_etmem_migrate_error) == NULL ||
++        CU_ADD_TEST(suite, test_etmem_migrate_ok) == NULL ||
++        CU_ADD_TEST(suite, test_etmemd_reclaim_swapcache_error) == NULL ||
++        CU_ADD_TEST(suite, test_etmemd_reclaim_swapcache_ok) == NULL) {
++            printf("CU_ADD_TEST fail. \n");
++            goto ERROR;
++    }
++
++    switch (cunit_mode) {
++        case CUNIT_SCREEN:
++            CU_basic_set_mode(CU_BRM_VERBOSE);
++            CU_basic_run_tests();
++            break;
++        case CUNIT_XMLFILE:
++            CU_set_output_filename("etmemd_migrate.c");
++            CU_automated_run_tests();
++            break;
++        case CUNIT_CONSOLE:
++            CU_console_run_tests();
++            break;
++        default:
++            printf("not support cunit mode, only support: "
++                   "0 for CUNIT_SCREEN, 1 for CUNIT_XMLFILE, 2 for CUNIT_CONSOLE\n");
++            goto ERROR;
++    }
++
++    num_failures = CU_get_number_of_failures();
++    CU_cleanup_registry();
++    return num_failures;
++
++ERROR:
++    error_num = CU_get_error();
++    CU_cleanup_registry();
++    return -error_num;
++}
+diff --git a/etmem/test/etmem_slide_ops_llt_test/CMakeLists.txt b/etmem/test/etmem_slide_ops_llt_test/CMakeLists.txt
+index 2162d9e..97c598c 100644
+--- a/etmem/test/etmem_slide_ops_llt_test/CMakeLists.txt
++++ b/etmem/test/etmem_slide_ops_llt_test/CMakeLists.txt
+@@ -24,6 +24,7 @@ INCLUDE_DIRECTORIES(${GLIB2_INCLUDE_DIRS})
+ SET(EXE etmem_slide_ops_llt)
+ 
+ add_executable(${EXE} etmem_slide_ops_llt.c)
++add_executable(mem_swaptest mem_swaptest.c)
+ 
+ target_link_libraries(${EXE} cunit ${BUILD_DIR}/lib/libetmemd.so ${BUILD_DIR}/lib/libtest.so pthread dl rt boundscheck numa ${GLIB2_LIBRARIES})
+ target_link_libraries(mem_swaptest pthread dl rt boundscheck)
+diff --git a/etmem/test/etmem_slide_ops_llt_test/test_slide_ops.sh b/etmem/test/etmem_slide_ops_llt_test/test_slide_ops.sh
+index f763726..8b80d9f 100644
+--- a/etmem/test/etmem_slide_ops_llt_test/test_slide_ops.sh
++++ b/etmem/test/etmem_slide_ops_llt_test/test_slide_ops.sh
+@@ -1,8 +1,19 @@
+ #!/bin/bash
+-#
+-#Level: 0
+-#Type: auto
+-#Description: start 多个不同的project
++
++# /******************************************************************************
++#  * Copyright (c) Huawei Technologies Co., Ltd. 2019-2021. All rights reserved.
++#  * etmem is licensed under the Mulan PSL v2.
++#  * You can use this software according to the terms and conditions of the Mulan PSL v2.
++#  * You may obtain a copy of Mulan PSL v2 at:
++#  *     http://license.coscl.org.cn/MulanPSL2
++#  * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR
++#  * IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY OR FIT FOR A PARTICULAR
++#  * PURPOSE.
++#  * See the Mulan PSL v2 for more details.
++#  * Author: liubo
++#  * Create: 2021-11-29
++#  * Description: test shell for etmem_slide_ops_llt
++#  ******************************************************************************/
+ 
+ set +e
+ 
+diff --git a/etmem/test/etmem_task_ops_llt_test/CMakeLists.txt b/etmem/test/etmem_task_ops_llt_test/CMakeLists.txt
+index ab22dd6..e766a61 100644
+--- a/etmem/test/etmem_task_ops_llt_test/CMakeLists.txt
++++ b/etmem/test/etmem_task_ops_llt_test/CMakeLists.txt
+@@ -1,4 +1,4 @@
+-s# /******************************************************************************
++# /******************************************************************************
+ #  * Copyright (c) Huawei Technologies Co., Ltd. 2019-2021. All rights reserved.
+ #  * etmem is licensed under the Mulan PSL v2.
+ #  * You can use this software according to the terms and conditions of the Mulan PSL v2.
+diff --git a/etmem/test/test.sh b/etmem/test/test.sh
+index 55a8cd9..0d894d4 100644
+--- a/etmem/test/test.sh
++++ b/etmem/test/test.sh
+@@ -1,5 +1,20 @@
+ #!/bin/bash
+ 
++# /******************************************************************************
++#  * Copyright (c) Huawei Technologies Co., Ltd. 2019-2021. All rights reserved.
++#  * etmem is licensed under the Mulan PSL v2.
++#  * You can use this software according to the terms and conditions of the Mulan PSL v2.
++#  * You may obtain a copy of Mulan PSL v2 at:
++#  *     http://license.coscl.org.cn/MulanPSL2
++#  * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR
++#  * IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY OR FIT FOR A PARTICULAR
++#  * PURPOSE.
++#  * See the Mulan PSL v2 for more details.
++#  * Author: liubo
++#  * Create: 2021-11-29
++#  * Description: test shell for etmem llt
++#  ******************************************************************************/
++
+ run_test_exit_value=0
+ usage()
+ {
+-- 
+1.8.3.1
+
