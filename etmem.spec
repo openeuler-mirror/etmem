@@ -2,9 +2,9 @@
 
 Name:	       etmem
 Version:       1.0
-Release:       11
+Release:       12
 Summary:       etmem 
-License:       Mulan PSL v2
+License:       MulanPSL-2.0
 URL:           https://gitee.com/openeuler/etmem
 Source0:       https://gitee.com/openeuler/etmem/repository/archive/%{version}.tar.gz
 
@@ -145,6 +145,9 @@ install -m 0644 userswap/include/uswap_api.h $RPM_BUILD_ROOT%{_includedir}
 %postun -p /sbin/ldconfig
 
 %changelog
+* Thu Dec 1 2022 liubo <liubo254@huawei.com> 1.0-12
+- Modify License to MulanPSL-2.0 in the spec
+
 * Mon Aug 1 2022 liubo <liubo254@huawei.com> 1.0-11
 - Sync the features and bug fixes in the etmem source repo. 
 
