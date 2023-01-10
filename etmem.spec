@@ -2,7 +2,7 @@
 
 Name:	       etmem
 Version:       1.0
-Release:       12
+Release:       13
 Summary:       etmem 
 License:       MulanPSL-2.0
 URL:           https://gitee.com/openeuler/etmem
@@ -92,6 +92,7 @@ Patch80: 0081-etmem-Fix-help-command.patch
 Patch81: 0082-etmem-add-etmem-project-License-and-notice-file.patch
 Patch82: 0083-etmem-fix-memory-leak.patch
 Patch83: 0084-etmem-add-dt-test-code-for-permission-check.patch
+Patch84: 0085-add-loongarch64-support.patch
 
 #Dependency
 BuildRequires: cmake gcc gcc-c++ glib2-devel
@@ -145,6 +146,9 @@ install -m 0644 userswap/include/uswap_api.h $RPM_BUILD_ROOT%{_includedir}
 %postun -p /sbin/ldconfig
 
 %changelog
+* Tue Jan 10 2023 huajingyun <huajingyun@loongson.cn> 1.0-13
+- add loongarch64 support
+
 * Thu Dec 1 2022 liubo <liubo254@huawei.com> 1.0-12
 - Modify License to MulanPSL-2.0 in the spec
 
