@@ -1,0 +1,60 @@
+From 90ea095a30002d05b139b076eee4e7662fabc5e1 Mon Sep 17 00:00:00 2001
+From: Jingyun Hua <huajingyun@loongson.cn>
+Date: Tue, 10 Jan 2023 09:39:22 +0800
+Subject: [PATCH] add loongarch64 support
+
+Add compile options -march=loongarch64 for loongarch64 platform.
+
+Signed-off-by: Jingyun Hua <huajingyun@loongson.cn>
+---
+ etmem/CMakeLists.txt      | 6 ++++++
+ etmem/test/CMakeLists.txt | 2 ++
+ 2 files changed, 8 insertions(+)
+
+diff --git a/etmem/CMakeLists.txt b/etmem/CMakeLists.txt
+index 505c655..9e3194a 100644
+--- a/etmem/CMakeLists.txt
++++ b/etmem/CMakeLists.txt
+@@ -90,6 +90,8 @@ target_link_libraries(etmemd PRIVATE pthread dl rt boundscheck numa ${GLIB2_LIBR
+ 
+ if( ${ARCHITECTURE} STREQUAL "aarch64" )
+  target_compile_options(etmemd PRIVATE -march=armv8-a)
++elseif( ${ARCHITECTURE} STREQUAL "loongarch64" )
++ target_compile_options(etmemd PRIVATE -march=loongarch64)
+ else()
+  target_compile_options(etmemd PRIVATE -march=core-avx-i -m64)
+ endif()
+@@ -105,6 +107,8 @@ target_link_libraries(etmem PRIVATE pthread dl rt boundscheck)
+ 
+ if( ${ARCHITECTURE} STREQUAL "aarch64" )
+  target_compile_options(etmem PRIVATE -march=armv8-a)
++elseif( ${ARCHITECTURE} STREQUAL "loongarch64" )
++ target_compile_options(etmemd PRIVATE -march=loongarch64)
+ else()
+  target_compile_options(etmem PRIVATE -march=core-avx-i -m64)
+ endif()
+@@ -121,6 +125,8 @@ target_link_libraries(etmemd_scan PRIVATE pthread dl rt boundscheck numa ${GLIB2
+ 
+ if( ${ARCHITECTURE} STREQUAL "aarch64" )
+  target_compile_options(etmemd_scan PRIVATE -march=armv8-a)
++elseif( ${ARCHITECTURE} STREQUAL "loongarch64" )
++ target_compile_options(etmemd_scan PRIVATE -march=loongarch64)
+ else()
+  target_compile_options(etmemd_scan PRIVATE -march=core-avx-i -m64)
+ endif()
+diff --git a/etmem/test/CMakeLists.txt b/etmem/test/CMakeLists.txt
+index a380e98..928e358 100644
+--- a/etmem/test/CMakeLists.txt
++++ b/etmem/test/CMakeLists.txt
+@@ -154,6 +154,8 @@ endif()
+ 
+ if( ${ARCHITECTURE} STREQUAL "aarch64")
+  SET(COMMON_COMPILE_OPT ${COMMON_COMPILE_OPT} -march=armv8-a)
++elseif( ${ARCHITECTURE} STREQUAL "loongarch64" )
++ SET(COMMON_COMPILE_OPT ${COMMON_COMPILE_OPT} -march=loongarch64)
+ else()
+  SET(COMMON_COMPILE_OPT ${COMMON_COMPILE_OPT} -march=core-avx-i -m64)
+ endif()
+-- 
+2.33.0
+
