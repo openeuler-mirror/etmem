@@ -90,6 +90,8 @@ target_link_libraries(etmemd PRIVATE pthread dl rt boundscheck numa ${GLIB2_LIBR
 
 if( ${ARCHITECTURE} STREQUAL "aarch64" )
  target_compile_options(etmemd PRIVATE -march=armv8-a)
+elseif( ${ARCHITECTURE} STREQUAL "loongarch64" )
+ target_compile_options(etmemd PRIVATE -march=loongarch64)
 else()
  target_compile_options(etmemd PRIVATE -march=core-avx-i -m64)
 endif()
@@ -105,6 +107,8 @@ target_link_libraries(etmem PRIVATE pthread dl rt boundscheck)
 
 if( ${ARCHITECTURE} STREQUAL "aarch64" )
  target_compile_options(etmem PRIVATE -march=armv8-a)
+elseif( ${ARCHITECTURE} STREQUAL "loongarch64" )
+ target_compile_options(etmemd PRIVATE -march=loongarch64)
 else()
  target_compile_options(etmem PRIVATE -march=core-avx-i -m64)
 endif()
@@ -121,6 +125,8 @@ target_link_libraries(etmemd_scan PRIVATE pthread dl rt boundscheck numa ${GLIB2
 
 if( ${ARCHITECTURE} STREQUAL "aarch64" )
  target_compile_options(etmemd_scan PRIVATE -march=armv8-a)
+elseif( ${ARCHITECTURE} STREQUAL "loongarch64" )
+ target_compile_options(etmemd_scan PRIVATE -march=loongarch64)
 else()
  target_compile_options(etmemd_scan PRIVATE -march=core-avx-i -m64)
 endif()

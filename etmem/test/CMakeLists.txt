@@ -154,6 +154,8 @@ endif()
 
 if( ${ARCHITECTURE} STREQUAL "aarch64")
  SET(COMMON_COMPILE_OPT ${COMMON_COMPILE_OPT} -march=armv8-a)
+elseif( ${ARCHITECTURE} STREQUAL "loongarch64" )
+ SET(COMMON_COMPILE_OPT ${COMMON_COMPILE_OPT} -march=loongarch64)
 else()
  SET(COMMON_COMPILE_OPT ${COMMON_COMPILE_OPT} -march=core-avx-i -m64)
 endif()
