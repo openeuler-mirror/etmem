@@ -33,6 +33,29 @@ etmem is a tiered memory extension technology that uses DRAM+memory compression/
     ```
 
 
+## Note
+
+### Running Dependency
+As one of memory extension tools, etmem depends on the support of kernel features to recognize the access information and it could write the memory to the swap area actively in order to achieve the requirements of vertical extension of memory. Etmem needs to insert the module "etmem_scan" and "etmem_swap" when it is running.
+```
+modprobe etmem_scan
+modprobe etmem_swap
+```
+Openeuler 21.03、21.09、20.03 LTS SP2 and 20.03 LTS SP3 support the function of memory extension completely so that we could use these kernels directly.
+
+### Authority Limitation
+Running etmem needs root authority so we must obey the guidance strictly during the process to avoid the system suffered from security risk because root account has the highest authority.
+
+### Usage Limitation
+* The client and server of etmem should be deployed on the same server since it not support to communicate cross servers.
+* Etmem could only scan the target progress which satisfy the length of names less equal than 15 bytes.
+* Expending memory with AEP devices, it depends on the AEP devices that could be recognized by system and init them as numa nodes. Field of "vm_flags" must be set to "ht" in configure file.
+* Private commands in engine only point to those tasks within it, e.g. cslide supply showhostpages and showtaskpages.
+* The fd in function "eng_mgt_func" musn't set 0xff or 0xfe for achievement of the code in the third party.
+* Support to add different third party librarys in single project distinguished by eng_name in configure file.
+* Prohibit to scan the same process concurrently. Couldn't use /proc/xxx/idle_pages and /proc/xxx/swap_pages files when etmem_scan.ko and etmem_swap.ko 
+  are not loaded.
+
 ## Instructions
 
 ### Starting Etmemd
@@ -67,12 +90,17 @@ Options:
 | -s or \-\-socket    | Name of socket to be listened to by etmemd, which is used to interact with the client. | Yes| Yes| A string of fewer than 107 characters| Specify the name of socket to be listened to. |
 | -h or \-\-help      | Help information| No| No| N/A| If this option is specified, the command execution exits after the command output is printed.|
 | -m or \-\-mode-systemctl|	When etmemd is started as a service, this option can be used in the command to support startup in fork mode.|	No|	No|	N/A|	N/A|
-|### etmem configuration file||||||
 
+### etmem configuration file
 Before running the etmem process, the administrator needs to plan the processes that require memory extension, configure the process information in the etmem configuration file, and configure the memory scan cycles and times, and cold and hot memory thresholds.
 
 The example configuration file is stored in `conf/example_conf.yaml` of the root directory of the source code in the source code package. You are advised to store the example configuration file in the `/etc/etmem/` directory. The following is an example:
-
+```
+/etc/etmem/cslide_conf.yaml
+/etc/etmem/slide_conf.yaml
+/etc/etmem/thirdparty_conf.yaml
+```
+Contents are as following:
 ```
 [project]
 name=test
@@ -140,6 +168,9 @@ Fields in the configuration file are described as follows.
 | loop      | Number of memory scan cycles| Yes| Yes| 1 to 10       | loop=3 // Scan for three times.|
 | interval  | Interval for scanning the memory| Yes| Yes| 1 to 1200     | interval=5 // The scanning interval is 5s.|
 | sleep     | Interval between large cycles of each memory scan and operation| Yes| Yes| 1 to 1200     | sleep=10 // The interval between two large cycles is 10s.|
+| sysmem_threshold | Configuration item of slide engine, stands for the threshold of system swap memory | No | Yes | 0 to 100 |
+| swapcache_high_wmark | Configuration item of slide engine, the proportion of system memory that swacache could occupy, high_wmark | No | Yes | 1 to 100 |
+| swapcache_low_wmark | Configuration item of slide engine, the proportion of system memory that swacache could occupy, low_wmark | No | Yes | 1 to  swapcache_high_wmark |
 | [engine]      | Start flag of the common configuration section of an engine| No| No| N/A| Start flag of the `engine` configuration item, indicating that the following configuration items, before another *[xxx]* or to the end of the file, belong to the engine section|
 | project       | Project to which the engine belongs| Yes| Yes| A string of fewer than 64 characters| If a project named `test` already exists, you can enter `project=test`.|
 | engine        | Name of the engine| Yes| Yes| slide/cslide/thirdparty                          | Specify the `slide`, `cslide`, or `thirdparty` policy that is used.|
@@ -163,6 +194,8 @@ Fields in the configuration file are described as follows.
 | anon_only        | Configuration item of `task` when `engine` is set `cslide`. It specifies whether to scan only anonymous pages.| No| Yes| yes/no               | anon_only=no // If this configuration item is set to `yes`, only anonymous pages are scanned. If this configuration item is set to `no`, non-anonymous pages are also scanned.|
 | ign_host         | Configuration item of `task` when `engine` is set `cslide`. It specifies whether to ignore the page table scan information on the host.| No| Yes| yes/no               | ign_host=no // `yes`: Ignore. `no`: Do not ignore.|
 | task_private_key | (Optional) Configuration item of `task` when `engine` is set `thirdparty`. This configuration item is reserved for the task of the third-party policy to parse private parameters.| No| No| Configured based on the private parameters of the third-party policy | Set this configuration item based on the private task parameters of the third-party policy.|
+| swap_threshold | Configuration item of `slide engine` means the process swap memory threshold | No | Yes | The abs value that processes could use | swap_threshold=10g // Processes would not trigger the swap if them posses less than 10g memory. In current version, only support the value unit as g/G. Cooperate with sysmem_threshold, it filter the process in whitelist when system memory below to this threshold.
+| swap_flag | Configuration item of `slide engine` means if enable specific process swap memory | No | Yes | yes/no | swap_flag=yes//enable specific memory swap in process |
 
 
 
