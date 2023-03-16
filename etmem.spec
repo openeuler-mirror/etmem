@@ -2,7 +2,7 @@
 
 Name:	       etmem
 Version:       1.1
-Release:       2
+Release:       3
 Summary:       etmem 
 License:       MulanPSL-2.0
 URL:           https://gitee.com/openeuler/etmem
@@ -60,6 +60,9 @@ install -m 0644 userswap/include/uswap_api.h $RPM_BUILD_ROOT%{_includedir}
 %postun -p /sbin/ldconfig
 
 %changelog
+* Thu Mar 16 2023 liubo <liubo254@huawei.com> 1.1-3
+- update the README file.
+
 * Tue Mar 7  2023 Huang Yang <huangyang@loongson.cn> 1.1-2
 - add loongarch64 support
 
