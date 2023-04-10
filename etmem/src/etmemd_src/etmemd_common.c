@@ -563,7 +563,6 @@ int file_permission_check(const char *file_path, mode_t mode)
 
     file_p = buf.st_mode & S_IRWX_VALID;
     if (file_p != mode) {
-        etmemd_log(ETMEMD_LOG_WARN, "file : %s mode is wrong.\n", file_path);
         return -1;
     }
 
