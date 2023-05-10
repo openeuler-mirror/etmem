@@ -2,7 +2,7 @@
 
 Name:	       etmem
 Version:       1.1
-Release:       3
+Release:       4
 Summary:       etmem 
 License:       MulanPSL-2.0
 URL:           https://gitee.com/openeuler/etmem
@@ -24,6 +24,7 @@ etmem module
 %build
 mkdir -p build
 cd build
+CFLAGS="$CFLAGS -Wno-unused-command-line-argument -Wno-unknown-warning-option -Wno-typedef-redefinition"; export CFLAGS
 cmake .. 
 make
 
@@ -60,6 +61,9 @@ install -m 0644 userswap/include/uswap_api.h $RPM_BUILD_ROOT%{_includedir}
 %postun -p /sbin/ldconfig
 
 %changelog
+* Wed May 10 2023 Xiaoya Huang <huangxiaoya@iscas.ac.cn> - 1.1-4
+- Fix clang building errors
+
 * Thu Mar 16 2023 liubo <liubo254@huawei.com> 1.1-3
 - update the README file.
 
