@@ -98,6 +98,7 @@ static int etmemd_migrate_mem(const char *pid, const char *grade_path, struct pa
             etmemd_log(ETMEMD_LOG_DEBUG, "migrate failed for pid %s, check if etmem_swap.ko installed\n", pid);
             free(swap_str);
             fclose(fp);
+            fp = NULL;
             return -1;
         }
         free(swap_str);
@@ -105,6 +106,8 @@ static int etmemd_migrate_mem(const char *pid, const char *grade_path, struct pa
     }
 
     fclose(fp);
+    fp = NULL;
+
     return 0;
 }
 

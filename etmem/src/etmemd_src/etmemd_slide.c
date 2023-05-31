@@ -216,11 +216,10 @@ static void *slide_executor(void *arg)
         return NULL;
     }
 
-    /* register cleanup function in case of unexpected cancellation detected,
-     * and register for memory_grade first, because it needs to clean after page_refs is cleaned */
-    pthread_cleanup_push(clean_memory_grade_unexpected, &memory_grade);
-    pthread_cleanup_push(clean_page_refs_unexpected, &page_refs);
-    pthread_cleanup_push(clean_page_sort_unexpected, &page_sort);
+    if (pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, NULL) != 0) {
+        etmemd_log(ETMEMD_LOG_ERR, "failed to set pthread cancel state.\n");
+        return NULL;
+    }
 
     page_refs = etmemd_do_scan(tk_pid, tk_pid->tk);
     if (page_refs == NULL) {
@@ -237,15 +236,10 @@ static void *slide_executor(void *arg)
     memory_grade = slide_policy_interface(&page_sort, tk_pid);
 
 scan_out:
-    /* clean up page_sort linked array */
-    pthread_cleanup_pop(1);
+    clean_page_sort_unexpected(&page_sort);
 
-    /* no need to use page_refs any longer.
-     * pop the cleanup function with parameter 1, because the items in page_refs list will be moved
-     * into the at least on list of memory_grade after polidy function called if no problems happened,
-     * but mig_policy_func() may fails to move page_refs in rare cases.
-     * It will do nothing if page_refs is NULL */
-    pthread_cleanup_pop(1);
+    /* no need to use page_refs any longer. */
+    clean_page_refs_unexpected(&page_refs);
 
     if (memory_grade == NULL) {
         etmemd_log(ETMEMD_LOG_DEBUG, "pid %u memory grade is empty\n", tk_pid->pid);
@@ -261,11 +255,16 @@ scan_out:
     }
 
 exit:
-    /* clean memory_grade here */
-    pthread_cleanup_pop(1);
+    clean_memory_grade_unexpected(&memory_grade);
+
     if (malloc_trim(0) == 0) {
         etmemd_log(ETMEMD_LOG_INFO, "malloc_trim to release memory for pid %u fail\n", tk_pid->pid);
     }
+
+    if (pthread_setcancelstate(PTHREAD_CANCEL_ENABLE, NULL) != 0) {
+        etmemd_log(ETMEMD_LOG_DEBUG, "pthread_setcancelstate PTHREAD_CANCEL_ENABLE failed.\n");
+    }
+    pthread_testcancel();
 
     return NULL;
 }
