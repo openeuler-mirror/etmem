@@ -48,6 +48,7 @@ static void threadpool_cancel_unlock(void *arg)
     }
     etmemd_log(ETMEMD_LOG_DEBUG, "unlock for threadpool once\n");
     pthread_mutex_unlock(g_pool_lock);
+    g_pool_lock = NULL;
 }
 
 static void *threadpool_routine(void *arg)

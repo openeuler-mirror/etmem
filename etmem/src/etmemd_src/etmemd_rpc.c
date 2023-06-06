@@ -22,6 +22,7 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <fcntl.h>
+#include <malloc.h>
 #include "securec.h"
 #include "etmemd_rpc.h"
 #include "etmemd_project.h"
@@ -162,7 +163,11 @@ static struct obj_cmd_item obj_remove_items[] = {
 
 static enum opt_result do_obj_remove(GKeyFile *config)
 {
-    return do_obj_cmd(config, obj_remove_items, ARRAY_SIZE(obj_remove_items), false);
+    enum opt_result ret;
+
+    ret = do_obj_cmd(config, obj_remove_items, ARRAY_SIZE(obj_remove_items), false);
+    (void)malloc_trim(0);
+    return ret;
 }
 
 static enum opt_result handle_obj_cmd(char *file_name, enum cmd_type type)

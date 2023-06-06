@@ -347,12 +347,7 @@ struct vmas *get_vmas_with_flags(const char *pid, char *vmflags_array[], int vmf
     size_t len;
     char *maps_file = NULL;
 
-    if (vmflags_num == 0) {
-        maps_file = MAPS_FILE;
-    } else {
-        maps_file = SMAPS_FILE;
-    }
-
+    maps_file = (vmflags_num == 0) ? MAPS_FILE : SMAPS_FILE;
     ret_vmas = (struct vmas *)calloc(1, sizeof(struct vmas));
     if (ret_vmas == NULL) {
         etmemd_log(ETMEMD_LOG_ERR, "malloc for vmas fail\n");
@@ -397,6 +392,7 @@ struct vmas *get_vmas_with_flags(const char *pid, char *vmflags_array[], int vmf
     }
 
     fclose(fp);
+    fp = NULL;
     return ret_vmas;
 }
 
