@@ -48,26 +48,33 @@ static int get_pid_through_pipe(char *arg_pid[], const int *pipefd)
         if (stdout_copy_fd < 0) {
             etmemd_log(ETMEMD_LOG_ERR, "dup(STDOUT_FILENO) fail.\n");
             close(pipefd[1]);
-            return -1;
+            exit(SIGPIPE);
         }
 
         ret = dup2(pipefd[1], fileno(stdout));
         if (ret == -1) {
             etmemd_log(ETMEMD_LOG_ERR, "dup2 pipefd fail.\n");
             close(pipefd[1]);
-            return -1;
+            exit(SIGPIPE);
+        }
+
+        ret = dup2(pipefd[1], fileno(stderr));
+        if (ret == -1) {
+            etmemd_log(ETMEMD_LOG_ERR, "dup2 piped fail.\n");
+            close(pipefd[1]);
+            exit(SIGPIPE);
         }
 
         if (execve(arg_pid[0], arg_pid, NULL) == -1) {
             etmemd_log(ETMEMD_LOG_ERR, "execve %s fail with %s.\n", arg_pid[0], strerror(errno));
             close(pipefd[1]);
-            return -1;
+            exit(SIGPIPE);
         }
 
-        if (fflush(stdout) != 0) {
+        if (fflush(stdout) != 0 || fflush(stderr) != 0) {
             etmemd_log(ETMEMD_LOG_ERR, "fflush execve stdout fail.\n");
             close(pipefd[1]);
-            return -1;
+            exit(SIGPIPE);
         }
         close(pipefd[1]);
         dup2(stdout_copy_fd, fileno(stdout));
@@ -75,6 +82,10 @@ static int get_pid_through_pipe(char *arg_pid[], const int *pipefd)
 
     /* wait for execve done */
     wait(&status);
+    if ((WIFEXITED(status) && WEXITSTATUS(status) == SIGPIPE) ||
+         !WIFEXITED(status)) {
+        return -1;
+    }
 
     return 0;
 }
