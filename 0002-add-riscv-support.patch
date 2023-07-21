@@ -1,0 +1,42 @@
+diff -u -r etmem-1.1/etmem/CMakeLists.txt etmem-1.1/etmem/CMakeLists.txt
+--- etmem-1.1/etmem/CMakeLists.txt	2022-12-06 21:13:28.000000000 +0800
++++ etmem-1.1/etmem/CMakeLists.txt	2023-07-19 10:22:07.000000000 +0800
+@@ -90,6 +90,8 @@
+ 
+ if( ${ARCHITECTURE} STREQUAL "aarch64" )
+  target_compile_options(etmemd PRIVATE -march=armv8-a)
++elseif( ${ARCHITECTURE} STREQUAL "riscv64" )
++ target_compile_options(etmemd PRIVATE -march=rv64gc)
+ else()
+  target_compile_options(etmemd PRIVATE -march=core-avx-i -m64)
+ endif()
+@@ -105,6 +107,8 @@
+ 
+ if( ${ARCHITECTURE} STREQUAL "aarch64" )
+  target_compile_options(etmem PRIVATE -march=armv8-a)
++elseif( ${ARCHITECTURE} STREQUAL "riscv64" )
++ target_compile_options(etmemd PRIVATE -march=rv64gc)
+ else()
+  target_compile_options(etmem PRIVATE -march=core-avx-i -m64)
+ endif()
+@@ -121,6 +125,8 @@
+ 
+ if( ${ARCHITECTURE} STREQUAL "aarch64" )
+  target_compile_options(etmemd_scan PRIVATE -march=armv8-a)
++elseif( ${ARCHITECTURE} STREQUAL "riscv64" )
++ target_compile_options(etmem PRIVATE -march=rv64gc)
+ else()
+  target_compile_options(etmemd_scan PRIVATE -march=core-avx-i -m64)
+ endif()
+diff -u -r etmem-1.1/etmem/test/CMakeLists.txt etmem-1.1/etmem/test/CMakeLists.txt
+--- etmem-1.1/etmem/test/CMakeLists.txt	2022-12-06 21:13:28.000000000 +0800
++++ etmem-1.1/etmem/test/CMakeLists.txt	2023-07-19 10:23:01.000000000 +0800
+@@ -154,6 +154,8 @@
+ 
+ if( ${ARCHITECTURE} STREQUAL "aarch64")
+  SET(COMMON_COMPILE_OPT ${COMMON_COMPILE_OPT} -march=armv8-a)
++elseif( ${ARCHITECTURE} STREQUAL "riscv64" )
++ SET(COMMON_COMPILE_OPT ${COMMON_COMPILE_OPT} -march=rv64gc)
+ else()
+  SET(COMMON_COMPILE_OPT ${COMMON_COMPILE_OPT} -march=core-avx-i -m64)
+ endif()

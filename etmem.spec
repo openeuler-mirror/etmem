@@ -2,12 +2,17 @@
 
 Name:	       etmem
 Version:       1.1
-Release:       4
+Release:       5
 Summary:       etmem 
 License:       MulanPSL-2.0
 URL:           https://gitee.com/openeuler/etmem
 Source0:       https://gitee.com/openeuler/etmem/repository/archive/%{version}.tar.gz
+%ifarch lonngarch64
 Patch0000:     0001-etmem-1.1-add-loongarch64-support.patch
+%endif
+%ifarch riscv64
+Patch0000:     0002-add-riscv-support.patch
+%endif
 #Dependency
 BuildRequires: cmake gcc gcc-c++ glib2-devel
 BuildRequires: libboundscheck numactl-devel libcap-devel json-c-devel
@@ -61,6 +66,9 @@ install -m 0644 userswap/include/uswap_api.h $RPM_BUILD_ROOT%{_includedir}
 %postun -p /sbin/ldconfig
 
 %changelog
+* Wed Jul 19 2023 yoo <sunyuechi@iscas.ac.cn> - 1.1-5
+- add riscv support
+
 * Wed May 10 2023 Xiaoya Huang <huangxiaoya@iscas.ac.cn> - 1.1-4
 - Fix clang building errors
 
