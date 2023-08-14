@@ -120,6 +120,18 @@ void free_vmas(struct vmas *vmas)
     free(vmas);
 }
 
+static void clean_vmas_resource_unexpected(void *arg)
+{
+    struct vmas **vmas = (struct vmas **)arg;
+
+    if (*vmas == NULL) {
+        return;
+    }
+
+    free_vmas(*vmas);
+    *vmas = NULL;
+}
+
 static bool parse_vma_seg0(struct vma *vma, const char *seg0)
 {
     int ret;
@@ -777,6 +789,7 @@ struct page_refs *etmemd_do_scan(const struct task_pid *tpid, const struct task 
         return NULL;
     }
 
+    pthread_cleanup_push(clean_vmas_resource_unexpected, &vmas);
     /* get vmas of target pid first. */
     vmas = get_vmas(pid);
     if (vmas == NULL) {
@@ -799,10 +812,12 @@ struct page_refs *etmemd_do_scan(const struct task_pid *tpid, const struct task 
             page_refs = NULL;
             break;
         }
+        (void)pthread_setcancelstate(PTHREAD_CANCEL_ENABLE, NULL);
         sleep((unsigned)page_scan->sleep);
+        (void)pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, NULL);
     }
 
-    free_vmas(vmas);
+    pthread_cleanup_pop(1);
 
     return page_refs;
 }

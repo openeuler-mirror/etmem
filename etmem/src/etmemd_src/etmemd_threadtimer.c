@@ -37,11 +37,7 @@ static void *thread_timer_routine(void *arg)
 
     expired_time = timer->expired_time;
 
-    if (pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, NULL) != 0) {
-        etmemd_log(ETMEMD_LOG_ERR, "failed to set pthread cancel state.\n");
-        return NULL;
-    }
-
+    pthread_cleanup_push(threadtimer_cancel_unlock, &timer->cond_mutex);
     pthread_mutex_lock(&timer->cond_mutex);
     while (!timer->down) {
         if (clock_gettime(CLOCK_MONOTONIC, &timespec) != 0) {
@@ -64,12 +60,9 @@ static void *thread_timer_routine(void *arg)
             break;
         }
     }
-    threadtimer_cancel_unlock(&timer->cond_mutex);
+    /* unlock th timer->cond_mutex */
+    pthread_cleanup_pop(1);
 
-    if (pthread_setcancelstate(PTHREAD_CANCEL_ENABLE, NULL) != 0) {
-        etmemd_log(ETMEMD_LOG_DEBUG, "pthread_setcancelstate PTHREAD_CANCEL_ENABLE failed.\n");
-    }
-    pthread_testcancel();
     pthread_exit(NULL);
 }
 
@@ -149,9 +142,10 @@ void thread_timer_stop(timer_thread* inst)
         return;
     }
     inst->down = true;
+    pthread_cond_broadcast(&(inst->cond));
 
-    pthread_cancel(inst->pthread);
-    pthread_join(inst->pthread, NULL);
+    (void)pthread_cancel(inst->pthread);
+    (void)pthread_join(inst->pthread, NULL);
     etmemd_log(ETMEMD_LOG_DEBUG, "Timer instance stops ! \n");
 }
 
