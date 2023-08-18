@@ -503,6 +503,24 @@ struct config_item g_page_scan_config_items[] = {
     {"sleep", INT_VAL, fill_page_scan_sleep, false},
 };
 
+static int fill_psi_scan_interval(void *obj, void *val)
+{
+    struct psi_scan *scan = (struct psi_scan *)obj;
+    int interval = parse_to_int(val);
+    if (interval < 1 || interval > MAX_INTERVAL_VALUE) {
+        etmemd_log(ETMEMD_LOG_ERR, "invalid project interval value %d, it must be between 1 and %d.\n",
+                   interval, MAX_INTERVAL_VALUE);
+        return -1;
+    }
+
+    scan->interval = interval;
+    return 0;
+}
+
+struct config_item g_psi_scan_config_items[] = {
+    {"interval", INT_VAL, fill_psi_scan_interval, false},
+};
+
 static int fill_region_scan_samp_interval(void *obj, void *val)
 {
     struct region_scan *scan = (struct region_scan *)obj;
@@ -572,27 +590,102 @@ int scan_fill_by_conf(GKeyFile *config, struct project *proj)
 {
     struct region_scan *rg_scan = NULL;
 
-    if (proj->type == PAGE_SCAN) {
-        if (parse_file_config(config, PROJ_GROUP, g_page_scan_config_items,
-                              ARRAY_SIZE(g_page_scan_config_items), proj->scan_param) != 0) {
-            etmemd_log(ETMEMD_LOG_ERR, "parse page scan config fail.\n");
+    switch (proj->type) {
+        case PAGE_SCAN:
+            if (parse_file_config(config, PROJ_GROUP, g_page_scan_config_items,
+                                ARRAY_SIZE(g_page_scan_config_items), proj->scan_param) != 0) {
+                etmemd_log(ETMEMD_LOG_ERR, "parse page scan config fail.\n");
+                return -1;
+            }
+            break;
+        case REGION_SCAN:
+            if (parse_file_config(config, PROJ_GROUP, g_region_scan_config_items,
+                                ARRAY_SIZE(g_region_scan_config_items), proj->scan_param) != 0) {
+                etmemd_log(ETMEMD_LOG_ERR, "parse region scan config fail.\n");
+                return -1;
+            }
+            rg_scan = (struct region_scan *)proj->scan_param;
+            if (rg_scan->min_nr_regions >= rg_scan->max_nr_regions) {
+                etmemd_log(ETMEMD_LOG_ERR, "min_nr_regions %d should be smaller than max_nr_regions %d.\n",
+                                            rg_scan->min_nr_regions, rg_scan->max_nr_regions);
+                return -1;
+            }
+            break;
+        case PSI_SCAN:
+            if (parse_file_config(config, PROJ_GROUP, g_psi_scan_config_items,
+                                ARRAY_SIZE(g_psi_scan_config_items), proj->scan_param) != 0) {
+                etmemd_log(ETMEMD_LOG_ERR, "parse page scan config fail.\n");
+                return -1;
+            }
+            break;
+        default:
+            etmemd_log(ETMEMD_LOG_ERR, "proj type : %u is not valid.", proj->type);
             return -1;
-        }
-    } else if (proj->type == REGION_SCAN) {
-        if (parse_file_config(config, PROJ_GROUP, g_region_scan_config_items,
-                              ARRAY_SIZE(g_region_scan_config_items), proj->scan_param) != 0) {
-            etmemd_log(ETMEMD_LOG_ERR, "parse region scan config fail.\n");
-            return -1;
-        }
-        rg_scan = (struct region_scan *)proj->scan_param;
-        if (rg_scan->min_nr_regions >= rg_scan->max_nr_regions) {
-            etmemd_log(ETMEMD_LOG_ERR, "min_nr_regions %d should be smaller than max_nr_regions %d.\n",
-                       rg_scan->min_nr_regions, rg_scan->max_nr_regions);
-            return -1;
-        }
     }
 
     return 0;
+}
+
+static int set_proj_page_scan(struct project *proj)
+{
+    struct page_scan *scan = NULL;
+
+    scan = (struct page_scan *)calloc(1, sizeof(struct page_scan));
+    if (scan == NULL) {
+        etmemd_log(ETMEMD_LOG_ERR, "calloc for page_scan fail\n");
+        return -1;
+    }
+    proj->scan_param = (void *)scan;
+
+    return 0;
+}
+
+static int set_proj_psi_scan(struct project *proj)
+{
+    struct psi_scan *scan = NULL;
+
+    scan = (struct psi_scan *)calloc(1, sizeof(struct psi_scan));
+    if (scan == NULL) {
+        etmemd_log(ETMEMD_LOG_ERR, "calloc for psi_scan fail\n");
+        return -1;
+    }
+    proj->scan_param = (void *)scan;
+
+    return 0;
+}
+
+static int set_proj_region_scan(struct project *proj)
+{
+    struct region_scan *scan = NULL;
+
+    scan = (struct region_scan *)calloc(1, sizeof(struct region_scan));
+    if (scan == NULL) {
+        etmemd_log(ETMEMD_LOG_ERR, "calloc for region_scan fail\n");
+        return -1;
+    }
+    proj->scan_param = (void *)scan;
+
+    return 0;
+}
+
+static int check_set_proj_scan_type(struct project *proj, char *scan_type)
+{
+    if (strcmp(scan_type, "page") == 0) {
+        proj->type = PAGE_SCAN;
+        return 0;
+    }
+
+    if (strcmp(scan_type, "region") == 0) {
+        proj->type = REGION_SCAN;
+        return 0;
+    }
+
+    if (strcmp(scan_type, "psi") == 0) {
+        proj->type = PSI_SCAN;
+        return 0;
+    }
+
+    return -1;
 }
 
 static int fill_project_scan_type(void *obj, void *val)
@@ -600,32 +693,30 @@ static int fill_project_scan_type(void *obj, void *val)
     struct project *proj = (struct project *)obj;
     char *scan_type = (char *)val;
 
-    if (strcmp(scan_type, "page") != 0 && strcmp(scan_type, "region") != 0) {
-        etmemd_log(ETMEMD_LOG_ERR, "invalid scan type %s, must be page or region\n",
-                   scan_type);
+    if (check_set_proj_scan_type(proj, scan_type) != 0) {
+        etmemd_log(ETMEMD_LOG_ERR, "check_set_proj_scan_type failed. should be page or region or psi.");
         return -1;
     }
 
-    if (strcmp(scan_type, "page") == 0) {
-        struct page_scan *scan = NULL;
-
-        scan = (struct page_scan *)calloc(1, sizeof(struct page_scan));
-        if (scan == NULL) {
-            etmemd_log(ETMEMD_LOG_ERR, "malloc fail\n");
+    switch (proj->type) {
+        case PAGE_SCAN:
+            if (set_proj_page_scan(proj) != 0) {
+                return -1;
+            }
+            break;
+        case REGION_SCAN:
+            if (set_proj_region_scan(proj) != 0) {
+                return -1;
+            }
+            break;
+        case PSI_SCAN:
+            if (set_proj_psi_scan(proj) != 0) {
+                return -1;
+            }
+            break;
+        default:
+            etmemd_log(ETMEMD_LOG_ERR, "proj type is wrong. : %u", proj->type);
             return -1;
-        }
-        proj->scan_param = (void *)scan;
-        proj->type = PAGE_SCAN;
-    } else {
-        struct region_scan *scan = NULL;
-
-        scan = (struct region_scan *)calloc(1, sizeof(struct region_scan));
-        if (scan == NULL) {
-            etmemd_log(ETMEMD_LOG_ERR, "malloc fail\n");
-            return -1;
-        }
-        proj->scan_param = (void *)scan;
-        proj->type = REGION_SCAN;
     }
 
     return 0;
@@ -894,6 +985,7 @@ enum opt_result etmemd_migrate_start(const char *project_name)
 
     switch (proj->type) {
         case PAGE_SCAN:
+        case PSI_SCAN:
             if (start_tasks(proj) != 0) {
                 etmemd_log(ETMEMD_LOG_ERR, "some task of project %s start fail\n", project_name);
                 return OPT_INTER_ERR;
@@ -937,6 +1029,7 @@ enum opt_result etmemd_migrate_stop(const char *project_name)
 
     switch (proj->type) {
         case PAGE_SCAN:
+        case PSI_SCAN:
             stop_tasks(proj);
             break;
         case REGION_SCAN:

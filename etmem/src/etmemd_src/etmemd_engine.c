@@ -21,6 +21,7 @@
 #include "etmemd_memdcd.h"
 #include "etmemd_damon.h"
 #include "etmemd_thirdparty.h"
+#include "etmemd_psi.h"
 #include "etmemd_log.h"
 #include "etmemd_common.h"
 #include "etmemd_file.h"
@@ -41,6 +42,7 @@ static struct engine_add_item g_engine_add_items[] = {
     {"memdcd", fill_engine_type_memdcd},
     {"damon", fill_engine_type_damon},
     {"thirdparty", fill_engine_type_thirdparty},
+    {"psi", fill_engine_type_psi_fb},
 };
 
 static struct engine_add_item *find_engine_add_item(const char *name)

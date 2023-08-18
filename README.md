@@ -521,6 +521,127 @@ etmem engine showhostpages -n proj_name -e cslide -s etmemd_socket
 |-e或\-\-engine|	指定执行的引擎的名字|	是|	是|	指定已经存在的，所需要执行的引擎的名字|
 |-t或\-\-task_name|	指定执行的任务的名字|	否|	是|	指定已经存在的，所需要执行的任务的名字|
 
+### etmem支持利用PSI策略使能cgroup 粒度内存扩展
+PSI 特性能够识别和量化资源竞争导致的业务中断，及其对复杂负载乃至整个系统在时间上的影响。
+etmem 通过获取 psi 压力信息，动态调节每轮的换出内存量，从而降低内存换出后对整体业务性能的影响。
+[PSI的相关资料介绍](https://www.kernel.org/doc/html/v5.17/translations/zh_CN/accounting/psi.html)
+
+#### 场景描述
+使用etmem组件包，在cgroup v1场景下，不断检测 cgroup 中PSI 控制参数，查看PSI压力情况是否满足要求，动态调整cgroup 粒度的内存占用量，达到cgroup 粒度内存扩展的目的。
+
+#### 注意事项
+1. etmem 在使用PSI策略时，依赖内核kernel开启了PSI 配置，即内核cmdline 中需要添加启动参数：
+```
+psi=1
+```
+2. etmem 利用swap内存到其他介质的方式来实现内存扩展，因此，在启动etmem前需要先挂载swap分区，可以直接挂载磁盘作为swap分区，或利用ZRAM方式进行挂载。
+* 磁盘作为swap分区
+```
+fdisk /dev/nvme1n1 创建swap分区
+mkswap /dev/nvme1n1p1
+swapon /dev/nvme1n1p1
+swapon -s          查看swap分区
+```
+
+* ZRAM作为swap分区
+```
+modprobe zram
+echo 90G > /sys/block/zram0/disksize
+mkswap /dev/zram0
+swapon /dev/zram0
+swapon -s          查看swap分区
+```
+
+#### 使用方法
+1、启动etmemd 进程
+```shell
+etmemd -l 0 -s etmemd_socket &
+# 命令行参数信息见 启动etmemd 进程章节
+````
+
+2、编写PSI策略配置文件
+示例配置文件如下：
+```
+[project]
+name=test
+scan_type=psi
+interval=6
+
+[engine]
+name=psi
+project=test
+
+[task]
+project=test
+engine=psi
+name=psi_task
+cg_path=isulad
+pressure=0.1
+max_probe=0.01
+limit_min_bytes=209715200
+```
+
+**配置参数含义与解释如下：**
+| 参数 | 参数含义 | 是否必须 | 是否有参数 | 实例说明 |
+|----|------|------|-------|------|
+|[project]]|	project公用配置段起始标识|	否|	否|	NA|
+|name|	指定project的名字|	是|	是|	64个字符以内的字符串|
+|scan_type|	扫描类型，PSI策略下指定为psi|	是|	是|	必须配置，psi|
+|interval|	每轮扫描换出的周期|	是|	是|	1~1200|
+|[engine]|	engine公用配置段起始标识|	否|	否|	NA|
+|project|	声明所在的project|	是|	是|	64个字以内的字符串|
+|name|	指定engine的名字|	是|	是|	64个字符以内的字符串|
+|[task]|	task公用配置段起始标识|	否|	否|	NA|
+|project|	声明所在的project|	是|	是|	64个字以内的字符串|
+|engine|	声明所在的engine|	是|	是|	64个字以内的字符串|
+|name|	task的名字|	是|	是|	64个字符以内的字符串|
+|cg_path|	要换出的cgroup名称|	是|	是|	实际的cgroup名称,最大长度64个字符，例如cg_path=isulad，则要求/sys/fs/cgroup/cpu,cpuacct/isulad/目录与/sys/fs/cgroup/memory/isulad/ 存在|
+|pressure|	pressure允许的压力大小|	否|	是|	pressure=0.1,不填写的话，默认为0.1|
+|max_probe|	max_probe，每轮回收内存的比例|	否|	是|	max_probe=0.01，每轮回收百分之一的可回收内存，默认为0.01|
+|limit_min_bytes|	cgroup允许占用的内存阈值|	否|	是|	KB为单位，limit_min_bytes=209715200，允许占用200M内存|
+
+3、加载配置工程与任务
+
+编写完成配置文件后，通过etmem客户端命令加载工程到etmemd服务端。
+```shell
+etmem obj add -f /etc/etmem/psi_conf.yaml  -s etmemd_socket
+```
+若需要更新psi_conf.yaml配置信息，可重新添加工程：
+```shell
+etmem obj del -f /etc/etmem/psi_conf.yaml  -s etmemd_socket
+etmem obj add -f /etc/etmem/psi_conf.yaml  -s etmemd_socket
+```
+若需要添加多个task对应的多个cg_path信息，可单独配置[task]单元字段，并进行添加：
+```shell
+etmem obj del -f /etc/etmem/psi_task.yaml  -s etmemd_socket
+```
+
+注： 
+* 因etmem要操作多个多个cgroup进程的控制字段，基于安全要求，etmem以root权限运行，其配置文件要求权限为600/400.
+* 不支持同一个配置文件中添加多个相同的字段[task/engine/project]名称，后面的会覆盖掉前面的，若需要添加多个task，需要多个配置文件
+
+4、启动工程
+在已经通过etmem obj add添加工程之后，在还未调用etmem obj del删除工程之前，可以对etmem的工程进行启动和停止。
+
+```shell
+etmem project start -n test -s etmemd_socket
+```
+工程启动后，etmem相关调试日志会存储到/var/log/message中，每一轮的回收信息会以 **DEBUG**等级打印到/var/log/message中，可以通过调整日志等级后查看。
+
+5、停止工程
+运行结束后，可通过etmem project 命令停止工程。
+```shell
+etmem project stop -n test -s etmemd_socket
+```
+查询工程
+```shell
+etmem project show -n test -s etmemd_socket
+```
+删除工程
+```shell
+etmem obj del -f /etc/etmem/psi_task.yaml  -s etmemd_socket
+```
+
 ## 参与贡献
 
 1.  Fork本仓库

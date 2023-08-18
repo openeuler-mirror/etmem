@@ -28,6 +28,7 @@
 enum val_type {
     INT_VAL,
     STR_VAL,
+    DOUBLE_VAL,
 };
 
 struct config_item {

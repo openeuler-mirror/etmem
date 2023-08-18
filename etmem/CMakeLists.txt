@@ -41,6 +41,7 @@ set(ETMEMD_SRC
  ${ETMEMD_SRC_DIR}/etmemd_threadtimer.c
  ${ETMEMD_SRC_DIR}/etmemd_pool_adapter.c
  ${ETMEMD_SRC_DIR}/etmemd_migrate.c
+ ${ETMEMD_SRC_DIR}/etmemd_psi_fb.c
  ${ETMEMD_SRC_DIR}/etmemd_damon.c)
 
 set(ETMEM_SRC

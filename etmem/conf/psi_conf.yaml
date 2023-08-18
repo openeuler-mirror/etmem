@@ -1,0 +1,16 @@
+[project]
+name=test
+scan_type=psi
+interval=6
+
+[engine]
+name=psi
+project=test
+
+[task]
+project=test
+engine=psi
+name=psi_task
+cg_path=isulad
+pressure=0.1
+limit_min_bytes=209715200
