@@ -74,6 +74,6 @@ void threadpool_reset_status(thread_pool** inst);
 /*
  * Stop and destroy the thread pool instance
  * */
-void threadpool_stop_and_destroy(thread_pool** inst);
+void threadpool_stop_and_destroy(thread_pool **inst);
 
 #endif //ETMEMD_THREADPOOL_H

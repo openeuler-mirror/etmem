@@ -203,7 +203,7 @@ static void threadpool_cancel_tasks_working(const thread_pool *inst)
     int i;
 
     for (i = 0; i < inst->max_thread_cap; i++) {
-        pthread_cancel(inst->tid[i]);
+        (void)pthread_cancel(inst->tid[i]);
     }
 }
 
@@ -236,7 +236,7 @@ void threadpool_stop_and_destroy(thread_pool **inst)
     threadpool_cancel_tasks_working(thread_instance);
 
     for (i = 0; i < thread_instance->max_thread_cap; i++) {
-        pthread_join(thread_instance->tid[i], NULL);
+        (void)pthread_join(thread_instance->tid[i], NULL);
     }
     free(thread_instance->tid);
 

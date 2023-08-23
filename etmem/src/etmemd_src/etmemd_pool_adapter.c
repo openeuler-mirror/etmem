@@ -50,6 +50,8 @@ static void *launch_threadtimer_executor(void *arg)
     int scheduing_count;
 
     if (tk->eng->proj->start) {
+        (void)pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, NULL);
+
         if (etmemd_get_task_pids(tk, true) != 0) {
             return NULL;
         }
@@ -57,6 +59,7 @@ static void *launch_threadtimer_executor(void *arg)
         push_ctrl_workflow(&tk->pids, executor->func);
 
         threadpool_notify(tk->threadpool_inst);
+        (void)pthread_setcancelstate(PTHREAD_CANCEL_ENABLE, NULL);
 
         pool_inst = tk->threadpool_inst;
         scheduing_count = __atomic_load_n(&pool_inst->scheduing_size, __ATOMIC_SEQ_CST);
@@ -120,12 +123,12 @@ void stop_and_delete_threadpool_work(struct task *tk)
                    tk->value, tk->eng->proj->name);
         return;
     }
-
     /* stop the threadtimer first */
     thread_timer_stop(tk->timer_inst);
 
     /* destroy them then */
     thread_timer_destroy(&tk->timer_inst);
+
     threadpool_stop_and_destroy(&tk->threadpool_inst);
 }
 
