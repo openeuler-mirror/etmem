@@ -20,6 +20,7 @@ static int parse_item(GKeyFile *config, char *group_name, struct config_item *it
 {
     GError *error = NULL;
     void *val;
+    double value;
 
     if (!g_key_file_has_key(config, group_name, item->key, NULL)) {
         if (item->option) {
@@ -45,6 +46,10 @@ static int parse_item(GKeyFile *config, char *group_name, struct config_item *it
                 etmemd_log(ETMEMD_LOG_ERR, "section %s of group [%s] should not be empty\n", item->key, group_name);
                 return -1;
             }
+            break;
+        case DOUBLE_VAL:
+            value = g_key_file_get_double(config, group_name, item->key, &error);
+            val = (void *)(&value);
             break;
         default:
             etmemd_log(ETMEMD_LOG_ERR, "config item type %d not support\n", item->type);

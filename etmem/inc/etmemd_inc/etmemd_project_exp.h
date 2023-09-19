@@ -22,6 +22,11 @@
 enum scan_type {
     PAGE_SCAN = 0,
     REGION_SCAN,
+    PSI_SCAN,
+};
+
+struct psi_scan {
+    int interval;
 };
 
 struct page_scan {
