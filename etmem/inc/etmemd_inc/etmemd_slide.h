@@ -19,11 +19,22 @@
 #include "etmemd_pool_adapter.h"
 #include "etmemd_engine.h"
 
+#ifdef ENABLE_PMU
+struct pmu_params {
+    uint64_t sample_period;  /* Sampling mem access events every N instructions */
+    uint32_t vma_updata_rate;  /* Update after every N slide migrations */
+    uint32_t cpu_set_size;    /* Number of CPU cores sampled by one thread */
+};
+#endif
+
 struct slide_params {
     struct task_executor *executor;
     int t;          /* watermark */
     unsigned long swap_threshold;
     uint8_t dram_percent;
+#ifdef ENABLE_PMU
+    struct pmu_params *pmu_params;      /* pmu sample params */
+#endif
 };
 
 enum swap_type {

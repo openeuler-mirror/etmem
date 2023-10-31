@@ -42,7 +42,8 @@ set(ETMEMD_SRC
  ${ETMEMD_SRC_DIR}/etmemd_pool_adapter.c
  ${ETMEMD_SRC_DIR}/etmemd_migrate.c
  ${ETMEMD_SRC_DIR}/etmemd_psi_fb.c
- ${ETMEMD_SRC_DIR}/etmemd_damon.c)
+ ${ETMEMD_SRC_DIR}/etmemd_damon.c
+ ${ETMEMD_SRC_DIR}/etmemd_pmu_scan.c)
 
 set(ETMEM_SRC
  ${ETMEM_SRC_DIR}/etmem.c
@@ -67,6 +68,21 @@ set(LIBRARY_OUTPUT_PATH ${BUILD_DIR}/lib)
 
 include(FindPkgConfig)
 pkg_search_module(GLIB2 REQUIRED glib-2.0)
+
+option(ENABLE_PMU "option for enable pmu sample support" OFF)
+if(ENABLE_PMU STREQUAL "ON")
+ find_path(uthash_INCLUDE_DIRS uthash.h
+   PATHS ${UTHASH_DIRECTORY})
+ find_path(perfmon_INCLUDE_DIRS pfmlib.h) 
+ find_library(LPFM_LIBRARY
+    NAMES pfm
+ )       
+
+ target_include_directories(etmemd PRIVATE ${uthash_INCLUDE_DIRS} ${perfmon_INCLUDE_DIRS})
+ target_include_directories(etmemd_scan PRIVATE ${uthash_INCLUDE_DIRS} ${perfmon_INCLUDE_DIRS})
+ target_link_libraries(etmemd PRIVATE m ${LPFM_LIBRARY})
+ add_definitions(-DENABLE_PMU)
+endif()
 
 target_include_directories(etmemd PRIVATE
  ${PROJECT_SOURCE_DIR}/inc/etmemd_inc

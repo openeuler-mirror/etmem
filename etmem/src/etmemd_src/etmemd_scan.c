@@ -945,9 +945,15 @@ struct page_sort *sort_page_refs(struct page_refs **page_refs, const struct task
     }
 
     while (*page_refs != NULL) {
+        int count = (*page_refs)->count;
+
+#ifdef ENABLE_PMU
+        count = limit_count_to_loop(count, \
+            ((struct page_scan *)tpid->tk->eng->proj->scan_param)->loop);
+#endif
         page_next = (*page_refs)->next;
-        (*page_refs)->next = (page_sort->page_refs_sort[(*page_refs)->count]);
-        (page_sort->page_refs_sort[(*page_refs)->count]) = *page_refs;
+        (*page_refs)->next = (page_sort->page_refs_sort[count]);
+        (page_sort->page_refs_sort[count]) = *page_refs;
         *page_refs = page_next;
     }
 
