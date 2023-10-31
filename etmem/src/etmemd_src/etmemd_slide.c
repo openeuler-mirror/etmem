@@ -224,7 +224,15 @@ static void *slide_executor(void *arg)
         goto scan_out;
     }
 
+#ifdef ENABLE_PMU
+    if (((struct slide_params *)tk_pid->tk->params)->pmu_params == NULL) {
+        page_refs = etmemd_do_scan(tk_pid, tk_pid->tk);
+    } else {
+        page_refs = etmemd_do_sample(tk_pid, tk_pid->tk);
+    }
+#else
     page_refs = etmemd_do_scan(tk_pid, tk_pid->tk);
+#endif
     if (page_refs == NULL) {
         etmemd_log(ETMEMD_LOG_WARN, "pid %u cannot get page refs\n", tk_pid->pid);
         goto scan_out;
@@ -239,7 +247,9 @@ static void *slide_executor(void *arg)
     memory_grade = slide_policy_interface(&page_sort, tk_pid);
 
 scan_out:
+#ifndef ENABLE_PMU
     clean_page_sort_unexpected(&page_sort);
+#endif
 
     pthread_cleanup_pop(1);
 
@@ -257,6 +267,11 @@ scan_out:
     }
 
 exit:
+#ifdef ENABLE_PMU
+    if (((struct slide_params *)tk_pid->tk->params)->pmu_params != NULL) {
+        merge_page_refs(&page_sort, &memory_grade);
+    }
+#endif
     clean_memory_grade_unexpected(&memory_grade);
 
     if (malloc_trim(0) == 0) {
@@ -319,10 +334,83 @@ static int fill_task_swap_threshold(void *obj, void *val)
     return 0;
 }
 
+#ifdef ENABLE_PMU
+static int fill_task_sample_period(void *obj, void *val)
+{
+    struct slide_params *params = (struct slide_params *)obj;
+    unsigned value = parse_to_int(val);
+    if (value <= 0) {
+        etmemd_log(ETMEMD_LOG_WARN,
+                   "sample_period %d is abnormal, [1000,10000] is recommanded!\n", value);
+        return -1;
+    }
+
+    if (params->pmu_params == NULL) {
+        params->pmu_params = calloc(1, sizeof(struct pmu_params));
+        if (params->pmu_params == NULL) {
+            etmemd_log(ETMEMD_LOG_ERR, "malloc for pmu_params failed.\n");
+            return -1;
+        }
+    }
+    params->pmu_params->sample_period = value;
+
+    return 0;
+}
+
+static int fill_task_vma_updata_rate(void *obj, void *val)
+{
+    struct slide_params *params = (struct slide_params *)obj;
+    int value = parse_to_int(val);
+    if (value <= 0) {
+        etmemd_log(ETMEMD_LOG_WARN,
+                   "vma_updata_rate is abnormal, the reasonable value should bigger than 1!\n");
+        value = 1;
+    }
+
+    if (params->pmu_params == NULL) {
+        params->pmu_params = calloc(1, sizeof(struct pmu_params));
+        if (params->pmu_params == NULL) {
+            etmemd_log(ETMEMD_LOG_ERR, "malloc for pmu_params failed.\n");
+            return -1;
+        }
+    }
+    params->pmu_params->vma_updata_rate = value;
+
+    return 0;
+}
+
+static int fill_task_cpu_set_size(void *obj, void *val)
+{
+    struct slide_params *params = (struct slide_params *)obj;
+    int value = parse_to_int(val);
+    if (value <= 0) {
+        etmemd_log(ETMEMD_LOG_WARN,
+                   "cpu_set_size is abnormal, the reasonable value should bigger than 1 !\n");
+        value = 1;
+    }
+
+    if (params->pmu_params == NULL) {
+        params->pmu_params = calloc(1, sizeof(struct pmu_params));
+        if (params->pmu_params == NULL) {
+            etmemd_log(ETMEMD_LOG_ERR, "malloc for pmu_params failed.\n");
+            return -1;
+        }
+    }
+    params->pmu_params->cpu_set_size = value;
+
+    return 0;
+}
+#endif
+
 static struct config_item g_slide_task_config_items[] = {
     {"T", INT_VAL, fill_task_threshold, false},
     {"swap_threshold", STR_VAL, fill_task_swap_threshold, true},
     {"dram_percent", INT_VAL, fill_task_dram_percent, true},
+#ifdef ENABLE_PMU
+    {"sample_period", INT_VAL, fill_task_sample_period, true},
+    {"vma_updata_rate", INT_VAL, fill_task_vma_updata_rate, true},
+    {"cpu_set_size", INT_VAL, fill_task_cpu_set_size, true},
+#endif
 };
 
 static int slide_fill_task(GKeyFile *config, struct task *tk)
@@ -385,6 +473,12 @@ static int slide_start_task(struct engine *eng, struct task *tk)
 static void slide_stop_task(struct engine *eng, struct task *tk)
 {
     struct slide_params *params = tk->params;
+
+#ifdef ENABLE_PMU
+    if (params->pmu_params != NULL) {
+        etmemd_stop_sample(tk);
+    }
+#endif
 
     stop_and_delete_threadpool_work(tk);
     etmemd_free_task_pids(tk);

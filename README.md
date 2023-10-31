@@ -642,6 +642,39 @@ etmem project show -n test -s etmemd_socket
 etmem obj del -f /etc/etmem/psi_task.yaml  -s etmemd_socket
 ```
 
+### etmem支持利用硬件访存事件进行内存数据分级
+
+#### 编译
+在原流程基础上,使用下面指令替换cmake ..
+$ cmake -DENABLE_PMU=ON ..  
+
+#### 项目依赖
+本项目依赖 uthash-devel, 可以通过指令直接安装;
+例如centos可以采用  yum install uthash-devel
+
+本项目依赖 libpfm4, 可以指令安装libpfm-devel;
+在执行安装指令之后, libpfm4 的头文件通常默认安装到路径 /usr/include/perfmon .
+要在cmake项目中正确包含头文件，需要设置环境变量 CMAKE_INCLUDE_PATH .
+export CMAKE_INCLUDE_PATH=$CMAKE_INCLUDE_PATH:/usr/include/perfmon  
+
+#### 使用方法
+参考etmem/conf/pmu_conf.yaml, 并在[task]添加下面三个配置参数
+```shell
+[task]
+sample_period=5000  
+vma_updata_rate=5
+cpu_set_size=16
+```
+
+**配置参数含义与解释如下：**
+配置文件各字段说明：
+
+| 配置项       | 配置项含义               | 是否必须 | 是否有参数 | 参数范围       | 示例说明                                                            |
+|-----------|---------------------|------|-------|------------|-----------------------------------------------------------------|
+| sample_period |利用pmu采样内存访问事件的周期     | 使用硬件访存事件时必须设置                 | 是 | [1000,10000]推荐参数范围     | sample_period=5000//表示5000条指令触发一次内存访问事件采样|
+| vma_updata_rate | vmas update 频率 | 使用硬件访存事件时必须设置               | 是 | [0,50]推荐参数范围     | vma_updata_rate=5//表示在5*loop*sleep时间做一次vma update |
+| cpu_set_size |多少个核用一个线程进行采样 | 使用硬件访存事件时必须设置               | 是 | lscpu 显示的cpu核数的因数，0除外  | cpu_set_size=16//首先我们设定一个核有一个buffer，cpu_set_size=16表示一个线程采样16个buffer里面的访存事件信息, 那么如果64核对应的就有64/16=4个线程进行采样  |
+
 ## 参与贡献
 
 1.  Fork本仓库
