@@ -38,9 +38,29 @@
 #define SOME_PRESSURE                   "some"
 #define FULL_PRESSURE                   "full"
 #define MAX_CG_PATH_LEN                 64
-
+#define UPGRADE_THRESHOLD               5
+#define DOWNGRADE_THRESHOLD             (-2)
+#define FIFTY_PERCENT                   0.5
+#define ONE_PERCENT                     0.01
+#define RATE_STRIDE                     ONE_PERCENT
 #define max(a, b)                       ((a) > (b) ? (a) : (b))
 #define min(a, b)                       ((a) > (b) ? (b) : (a))
+
+
+static void update_reclaim_rate(struct psi_task_params *p, bool validate)
+{
+    p->gather = validate ? max(0, p->gather + 1) : min(0, p->gather -1);
+    if (p->gather >= UPGRADE_THRESHOLD) {
+        p->reclaim_rate = min(p->reclaim_rate + RATE_STRIDE, p->reclaim_rate_max);
+        p->gather = 0;
+        etmemd_log(ETMEMD_LOG_DEBUG, "increase reclaim rate to %f", p->reclaim_rate);
+    } else if (p->gather <= DOWNGRADE_THRESHOLD) {
+        p->reclaim_rate = max(p->reclaim_rate - RATE_STRIDE, p->reclaim_rate_min);
+        p->gather = 0;
+        etmemd_log(ETMEMD_LOG_DEBUG, "decrease reclaim rate to %f", p->reclaim_rate);
+    }
+    return;
+}
 
 static void psi_next_working_params(struct psi_task_params **params)
 {
@@ -558,6 +578,7 @@ static int psi_do_reclaim(struct psi_task_params *task_params)
 
     /* check the pressure is high or not */
     if (!validate_pressure(task_params->cg_path, task_params)) {
+        update_reclaim_rate(task_params, false);
         etmemd_log(ETMEMD_LOG_DEBUG, "memory pressure is high, should not swap");
         return 0;
     }
@@ -579,16 +600,20 @@ static int psi_do_reclaim(struct psi_task_params *task_params)
         return 0;
     }
 
-    reclaim_size = (unsigned long)(current_mem - limit_min_bytes_opt) * task_params->max_probe;
+    reclaim_size = (unsigned long)(current_mem - limit_min_bytes_opt) * task_params->reclaim_rate;
     reclaim_size &= ~0xFFF;
 
-    etmemd_log(ETMEMD_LOG_DEBUG, "should reclaim size: %lu, current: %lu, limit: %lu, max_probe: %.2f",
-                                  reclaim_size, current_mem, limit_min_bytes_opt, task_params->max_probe);
+    etmemd_log(ETMEMD_LOG_DEBUG, "should reclaim size: %lu, current: %lu, limit: %lu, reclaim_rate: %.2f",
+                                  reclaim_size, current_mem, limit_min_bytes_opt, task_params->reclaim_rate);
 
+    if (reclaim_size == 0) {
+        return 0;
+    }
     /* do reclaim */
     if (reclaim_by_memory_claim(task_params, reclaim_size) != 0) {
         return -1;
     }
+    update_reclaim_rate(task_params, true);
 
     return 0;
 }
@@ -712,17 +737,42 @@ static int fill_psi_param_pressure(void *obj, void *val)
     return 0;
 }
 
-static int fill_psi_param_max_probe(void *obj, void *val)
+static int fill_psi_param_reclaim_rate(void *obj, void *val)
 {
     struct psi_task_params *params = (struct psi_task_params *)obj;
-    float value = (float)(*(double *)val);
-
-    params->max_probe = value;
-    if (params->max_probe <= 0) {
-        etmemd_log(ETMEMD_LOG_ERR, "PSI max_probe is invalid.\n");
+    double value = *(double *)val;
+    if (value <= 0) {
+        etmemd_log(ETMEMD_LOG_ERR, "PSI reclaim_rate is invalid.\n");
         return -1;
     }
 
+    params->reclaim_rate = value;
+    return 0;
+}
+
+static int fill_psi_param_reclaim_rate_max(void *obj, void *val)
+{
+    struct psi_task_params *params = (struct psi_task_params *)obj;
+    double value = *(double *)val;
+    if (value <= 0) {
+        etmemd_log(ETMEMD_LOG_ERR, "PSI reclaim_rate_max is invalid.\n");
+        return -1;
+    }
+
+    params->reclaim_rate_max = value;
+    return 0;
+}
+
+static int fill_psi_param_reclaim_rate_min(void *obj, void *val)
+{
+    struct psi_task_params *params = (struct psi_task_params *)obj;
+    double value = *(double *)val;
+    if (value <= 0) {
+        etmemd_log(ETMEMD_LOG_ERR, "PSI reclaim_rate_min is invalid.\n");
+        return -1;
+    }
+
+    params->reclaim_rate_min = value;
     return 0;
 }
 
@@ -831,7 +881,9 @@ static struct config_item g_psi_task_config_items[] = {
     {"cg_path", STR_VAL, fill_psi_param_cg_path, false},
     {"pressure", DOUBLE_VAL, fill_psi_param_pressure, true},
     {"toleration", DOUBLE_VAL, fill_psi_param_toleration, true},
-    {"max_probe", DOUBLE_VAL, fill_psi_param_max_probe, true},
+    {"reclaim_rate", DOUBLE_VAL, fill_psi_param_reclaim_rate, true},
+    {"reclaim_rate_max", DOUBLE_VAL, fill_psi_param_reclaim_rate_max, true},
+    {"reclaim_rate_min", DOUBLE_VAL, fill_psi_param_reclaim_rate_min, true},
     {"limit_min_bytes", STR_VAL, fill_psi_param_limit_min_bytes, true},
 };
 
@@ -846,8 +898,11 @@ static int psi_fill_task(GKeyFile *config, struct task *tk)
     /* set the default pressure value : 0.1 */
     params->pressure = 0.1;
 
-    /* set max_probe 0.01, reclaim 1 / 100 size of reclaimable size */
-    params->max_probe = 0.01;
+    /* set reclaim rate 0.05, reclaim 5 / 100 size of reclaimable size */
+    params->reclaim_rate = 0.05;
+    params->reclaim_rate_max = FIFTY_PERCENT;
+    params->reclaim_rate_min = ONE_PERCENT;
+    params->gather = 0;
 
     if (parse_file_config(config, TASK_GROUP,
                           g_psi_task_config_items,

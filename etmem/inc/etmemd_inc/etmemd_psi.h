@@ -25,7 +25,10 @@ struct psi_task_params {
     char *cg_path;
     double pressure;                        /* benchmark swap rate */
     double toleration;                      /* Dynamic accuracy */
-    double max_probe;                       /* max_probe decide the reclaim size */
+    double reclaim_rate;
+    double reclaim_rate_max;
+    double reclaim_rate_min;
+    int gather;
     struct psi_eng_params *eng_params;
     unsigned long limit_min_bytes;
     struct psi_task_params *next;

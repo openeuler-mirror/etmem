@@ -577,7 +577,7 @@ engine=psi
 name=psi_task
 cg_path=isulad
 pressure=0.1
-max_probe=0.01
+reclaim_rate=0.01
 limit_min_bytes=209715200
 ```
 
@@ -597,7 +597,9 @@ limit_min_bytes=209715200
 |name|	task的名字|	是|	是|	64个字符以内的字符串|
 |cg_path|	要换出的cgroup名称|	是|	是|	实际的cgroup名称,最大长度64个字符，例如cg_path=isulad，则要求/sys/fs/cgroup/cpu,cpuacct/isulad/目录与/sys/fs/cgroup/memory/isulad/ 存在|
 |pressure|	pressure允许的压力大小|	否|	是|	pressure=0.1,不填写的话，默认为0.1|
-|max_probe|	max_probe，每轮回收内存的比例|	否|	是|	max_probe=0.01，每轮回收百分之一的可回收内存，默认为0.01|
+|reclaim_rate|	每轮回收内存的比例|	否|	是|	reclaim_rate=0.01，每轮回收百分之一的可回收内存，运行过程中会自适应增大或减小，默认为0.05|
+|reclaim_rate_max|	每轮回收内存的最大比例|	否|	是|	reclaim_rate_max=0.5，reclaim_rate最大增长到该值，默认为0.5|
+|reclaim_rate_min|	每轮回收内存的最小比例|	否|	是|	reclaim_rate_min=0.01，reclaim_rate最小减到该值，默认为0.01|
 |limit_min_bytes|	cgroup允许占用的内存阈值|	否|	是|	KB为单位，limit_min_bytes=209715200，允许占用200M内存|
 
 3、加载配置工程与任务
