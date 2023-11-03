@@ -725,72 +725,24 @@ static void psi_clear_task(struct task *tk)
     tk->params = NULL;
 }
 
-static int fill_psi_param_pressure(void *obj, void *val)
-{
-    struct psi_task_params *params = (struct psi_task_params *)obj;
-    float value = (float)(*(double *)val);
-
-    params->pressure = value;
-    if (params->pressure <= 0) {
-        etmemd_log(ETMEMD_LOG_ERR, "PSI pressure is invalid.\n");
-        return -1;
-    }
-
-    return 0;
+#define DEFINE_FILL_PARAM_DOUBLE(name)                                   \
+static inline int fill_psi_param_##name(void *obj, void *val)                \
+{                                                                            \
+    struct psi_task_params *params = (struct psi_task_params *)obj;          \
+    double value = *(double *)val;                                           \
+    if (value <= 0) {                                                        \
+        etmemd_log(ETMEMD_LOG_ERR, "PSI fb param: %s: %f invalid!\n", #name, value); \
+        return -1;                                                           \
+    }                                                                        \
+    params->name = value;                                                    \
+    etmemd_log(ETMEMD_LOG_DEBUG, "PSI fb param: %s: %f\n", #name, value);    \
+    return 0;                                                                \
 }
 
-static int fill_psi_param_reclaim_rate(void *obj, void *val)
-{
-    struct psi_task_params *params = (struct psi_task_params *)obj;
-    double value = *(double *)val;
-    if (value <= 0) {
-        etmemd_log(ETMEMD_LOG_ERR, "PSI reclaim_rate is invalid.\n");
-        return -1;
-    }
-
-    params->reclaim_rate = value;
-    return 0;
-}
-
-static int fill_psi_param_reclaim_rate_max(void *obj, void *val)
-{
-    struct psi_task_params *params = (struct psi_task_params *)obj;
-    double value = *(double *)val;
-    if (value <= 0) {
-        etmemd_log(ETMEMD_LOG_ERR, "PSI reclaim_rate_max is invalid.\n");
-        return -1;
-    }
-
-    params->reclaim_rate_max = value;
-    return 0;
-}
-
-static int fill_psi_param_reclaim_rate_min(void *obj, void *val)
-{
-    struct psi_task_params *params = (struct psi_task_params *)obj;
-    double value = *(double *)val;
-    if (value <= 0) {
-        etmemd_log(ETMEMD_LOG_ERR, "PSI reclaim_rate_min is invalid.\n");
-        return -1;
-    }
-
-    params->reclaim_rate_min = value;
-    return 0;
-}
-
-static int fill_psi_param_toleration(void *obj, void *val)
-{
-    struct psi_task_params *params = (struct psi_task_params *)obj;
-    float value = (float)(*(double *)val);
-
-    params->toleration = value;
-    if (params->toleration <= 0) {
-        etmemd_log(ETMEMD_LOG_ERR, "PSI toleration is invalid.\n");
-        return -1;
-    }
-
-    return 0;
-}
+DEFINE_FILL_PARAM_DOUBLE(pressure);
+DEFINE_FILL_PARAM_DOUBLE(reclaim_rate);
+DEFINE_FILL_PARAM_DOUBLE(reclaim_rate_max);
+DEFINE_FILL_PARAM_DOUBLE(reclaim_rate_min);
 
 static int check_cgroup_fs_path_valid(char *cgroup_task_path, char *cg_path,
                                       unsigned int file_str_size, char *cg_name)
@@ -882,7 +834,6 @@ static int fill_psi_param_limit_min_bytes(void *obj, void *val)
 static struct config_item g_psi_task_config_items[] = {
     {"cg_path", STR_VAL, fill_psi_param_cg_path, false},
     {"pressure", DOUBLE_VAL, fill_psi_param_pressure, true},
-    {"toleration", DOUBLE_VAL, fill_psi_param_toleration, true},
     {"reclaim_rate", DOUBLE_VAL, fill_psi_param_reclaim_rate, true},
     {"reclaim_rate_max", DOUBLE_VAL, fill_psi_param_reclaim_rate_max, true},
     {"reclaim_rate_min", DOUBLE_VAL, fill_psi_param_reclaim_rate_min, true},
