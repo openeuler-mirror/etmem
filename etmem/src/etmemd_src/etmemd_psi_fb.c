@@ -311,8 +311,9 @@ static int read_from_cgroup_file(const char *cg_path, const char *file_name, uns
     }
 
     recv_size = read(fd, buf, size);
-    if (recv_size <= 0) {
-        etmemd_log(ETMEMD_LOG_ERR, "read from cgroup fail\n");
+    if (recv_size < 0) {
+        etmemd_log(ETMEMD_LOG_ERR, "read from cgroup:%s file %s fail: %s\n",
+            cg_path, file_name, strerror(errno));
         goto free_buf;
     }
 
@@ -339,7 +340,7 @@ err_out:
 static int write_cgroup_file(const char *cg_path, const char *file_name, unsigned long value)
 {
     int fd;
-    ssize_t write_size;
+    ssize_t res;
     unsigned char *buf = NULL;
     u_int64_t size = 32;
     int ret = -1;
@@ -361,9 +362,10 @@ static int write_cgroup_file(const char *cg_path, const char *file_name, unsigne
         goto free_buf;
     }
 
-    write_size = write(fd, buf, size);
-    if (write_size <= 0) {
-        etmemd_log(ETMEMD_LOG_ERR, "write to cgroup fail, write size: %d\n", write_size);
+    res = write(fd, buf, size);
+    if (res < 0) {
+        etmemd_log(ETMEMD_LOG_ERR, "write cgroup:%s file:%s, try to write: %s, fail: %s\n",
+            cg_path, file_name, buf, strerror(errno));
         goto free_buf;
     }
 
