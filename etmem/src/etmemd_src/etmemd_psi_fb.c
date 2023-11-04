@@ -43,6 +43,7 @@
 #define FIFTY_PERCENT                   0.5
 #define ONE_PERCENT                     0.01
 #define RATE_STRIDE                     ONE_PERCENT
+#define TEN_PERCENT                     0.1
 #define max(a, b)                       ((a) > (b) ? (a) : (b))
 #define min(a, b)                       ((a) > (b) ? (b) : (a))
 
@@ -525,6 +526,26 @@ static int get_reclaimable_bytes(struct psi_task_params *task_params, unsigned l
     return 0;
 }
 
+#define LIMIT_HUGE_VALUE  (LONG_MAX/2)
+static int get_min_by_ratio(struct psi_task_params *task_params, unsigned long *value)
+{
+    unsigned long memlimit = 0;
+
+    if (read_from_cgroup_file(task_params->cg_path, "memory.limit_in_bytes",
+                                &memlimit) != 0) {
+        return -1;
+    }
+
+    // treat a huge value as unconfigured
+    if (memlimit > LIMIT_HUGE_VALUE) {
+        *value = 0;
+        return 0;
+    }
+
+    *value = memlimit * task_params->limit_min_ratio;
+    return 0;
+}
+
 static int get_limit_minbytes(struct psi_task_params *task_params, unsigned long *value)
 {
     unsigned long memory_usage_in_bytes = 0;
@@ -532,6 +553,8 @@ static int get_limit_minbytes(struct psi_task_params *task_params, unsigned long
     unsigned long unreclaimable_maybe = 0;
     unsigned long limit_min_bytes = 0;
     unsigned long memory_min = 0;
+    unsigned long memory_low = 0;
+    unsigned long min_for_ratio = 0;
 
     if (read_from_cgroup_file(task_params->cg_path, "memory.usage_in_bytes",
                               &memory_usage_in_bytes) != 0) {
@@ -546,19 +569,29 @@ static int get_limit_minbytes(struct psi_task_params *task_params, unsigned long
 
     unreclaimable_maybe = memory_usage_in_bytes > reclaimable_bytes ?
                           (memory_usage_in_bytes - reclaimable_bytes) : 0;
-
     limit_min_bytes = task_params->limit_min_bytes + unreclaimable_maybe;
-
-    etmemd_log(ETMEMD_LOG_DEBUG, "limit_min_bytes: %lu task_params-: %lu unreclaimable_maybe: %lu",
-                                  limit_min_bytes, task_params->limit_min_bytes, unreclaimable_maybe);
 
     if (read_from_cgroup_file(task_params->cg_path, "memory.min",
                               &memory_min) != 0) {
         etmemd_log(ETMEMD_LOG_ERR, "memory_min failed.");
         return -1;
     }
-
     limit_min_bytes = max(limit_min_bytes, memory_min);
+
+    if (read_from_cgroup_file(task_params->cg_path, "memory.low",
+                              &memory_low) != 0) {
+        return -1;
+    }
+    limit_min_bytes = max(limit_min_bytes, memory_low);
+
+    if (get_min_by_ratio(task_params, &min_for_ratio) != 0) {
+        return -1;
+    }
+    limit_min_bytes = max(limit_min_bytes, min_for_ratio);
+
+    etmemd_log(ETMEMD_LOG_DEBUG,
+                "limit_min_bytes: %lu (unreclaim:%lu min:%lu low:%lu min_ratio:%lu)",
+                limit_min_bytes, unreclaimable_maybe, memory_min, memory_low, min_for_ratio);
     *value = limit_min_bytes;
     return 0;
 }
@@ -744,6 +777,7 @@ DEFINE_FILL_PARAM_DOUBLE(pressure);
 DEFINE_FILL_PARAM_DOUBLE(reclaim_rate);
 DEFINE_FILL_PARAM_DOUBLE(reclaim_rate_max);
 DEFINE_FILL_PARAM_DOUBLE(reclaim_rate_min);
+DEFINE_FILL_PARAM_DOUBLE(limit_min_ratio);
 
 static int check_cgroup_fs_path_valid(char *cgroup_task_path, char *cg_path,
                                       unsigned int file_str_size, char *cg_name)
@@ -839,6 +873,7 @@ static struct config_item g_psi_task_config_items[] = {
     {"reclaim_rate_max", DOUBLE_VAL, fill_psi_param_reclaim_rate_max, true},
     {"reclaim_rate_min", DOUBLE_VAL, fill_psi_param_reclaim_rate_min, true},
     {"limit_min_bytes", STR_VAL, fill_psi_param_limit_min_bytes, true},
+    {"limit_min_ratio", DOUBLE_VAL, fill_psi_param_limit_min_ratio, true},
 };
 
 static int psi_fill_task(GKeyFile *config, struct task *tk)
@@ -857,6 +892,7 @@ static int psi_fill_task(GKeyFile *config, struct task *tk)
     params->reclaim_rate_max = FIFTY_PERCENT;
     params->reclaim_rate_min = ONE_PERCENT;
     params->gather = 0;
+    params->limit_min_ratio = TEN_PERCENT;
 
     if (parse_file_config(config, TASK_GROUP,
                           g_psi_task_config_items,
