@@ -260,7 +260,7 @@ static int get_memory_pressure_some(const char *cg_pressure_path, struct memory_
     return ret;
 }
 
-static int get_cgorup_fd(const char *cg_path, const char *file_name, int mode)
+static int get_cgroup_fd(const char *cg_path, const char *file_name, int mode)
 {
     char *file_path = NULL;
     size_t file_str_size;
@@ -285,7 +285,7 @@ static int get_cgorup_fd(const char *cg_path, const char *file_name, int mode)
 
     fd = open(file_path, mode);
     if (fd == -1) {
-        etmemd_log(ETMEMD_LOG_ERR, "open file %s in fila_path: %s fail\n", file_path, file_name);
+        etmemd_log(ETMEMD_LOG_ERR, "open file %s in file_path: %s fail\n", file_path, file_name);
         free(file_path);
         return -1;
     }
@@ -302,7 +302,7 @@ static int read_from_cgroup_file(const char *cg_path, const char *file_name, uns
     u_int64_t size = 32;
     int ret = -1;
 
-    fd = get_cgorup_fd(cg_path, file_name, O_RDONLY);
+    fd = get_cgroup_fd(cg_path, file_name, O_RDONLY);
     if (fd == -1) {
         return -1;
     }
@@ -331,7 +331,7 @@ static int read_from_cgroup_file(const char *cg_path, const char *file_name, uns
         goto free_buf;
     }
 
-    ret =  0;
+    ret = 0;
 
 free_buf:
     free(buf);
@@ -348,7 +348,7 @@ static int write_cgroup_file(const char *cg_path, const char *file_name, unsigne
     u_int64_t size = 32;
     int ret = -1;
 
-    fd = get_cgorup_fd(cg_path, file_name, O_WRONLY);
+    fd = get_cgroup_fd(cg_path, file_name, O_WRONLY);
     if (fd == -1) {
         return -1;
     }
@@ -372,7 +372,7 @@ static int write_cgroup_file(const char *cg_path, const char *file_name, unsigne
         goto free_buf;
     }
 
-    ret =  0;
+    ret = 0;
 
 free_buf:
     free(buf);
@@ -392,7 +392,7 @@ static int read_from_cgroup_vmstat(const char *cg_path, const char *file_name,
     char* pvalue = NULL;
     char* pDelimiter = " ";
 
-    fd = get_cgorup_fd(cg_path, file_name, O_RDONLY);
+    fd = get_cgroup_fd(cg_path, file_name, O_RDONLY);
     if (fd == -1) {
         return -1;
     }
@@ -616,7 +616,7 @@ static int psi_do_reclaim(struct psi_task_params *task_params)
     /* check the pressure is high or not */
     if (!validate_pressure(task_params->cg_path, task_params)) {
         update_reclaim_rate(task_params, false);
-        etmemd_log(ETMEMD_LOG_DEBUG, "memory pressure is high, should not swap");
+        etmemd_log(ETMEMD_LOG_DEBUG, "memory pressure is high, should not reclaim");
         return 0;
     }
 
