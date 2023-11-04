@@ -44,6 +44,7 @@
 #define ONE_PERCENT                     0.01
 #define RATE_STRIDE                     ONE_PERCENT
 #define TEN_PERCENT                     0.1
+#define SIZE_1G                         (1UL << 30)
 #define max(a, b)                       ((a) > (b) ? (a) : (b))
 #define min(a, b)                       ((a) > (b) ? (b) : (a))
 
@@ -637,6 +638,7 @@ static int psi_do_reclaim(struct psi_task_params *task_params)
     }
 
     reclaim_size = (unsigned long)(current_mem - limit_min_bytes_opt) * task_params->reclaim_rate;
+    reclaim_size = min(reclaim_size, task_params->reclaim_max_bytes);
     reclaim_size &= ~0xFFF;
 
     etmemd_log(ETMEMD_LOG_DEBUG, "should reclaim size: %lu, current: %lu, limit: %lu, reclaim_rate: %.2f",
@@ -850,21 +852,23 @@ err_out:
     return -1;
 }
 
-static int fill_psi_param_limit_min_bytes(void *obj, void *val)
-{
-    unsigned long limit_min_bytes;
-    struct psi_task_params *params = (struct psi_task_params *)obj;
-
-    if (get_unsigned_long_value(val, &limit_min_bytes) != 0) {
-        etmemd_log(ETMEMD_LOG_ERR, "get limit_min_bytes failed.\n");
-        return -1;
-    }
-
-    free(val);
-    params->limit_min_bytes = limit_min_bytes;
-
-    return 0;
+#define DEFINE_FILL_PARAM_STR_TO_UL(name)                                \
+static inline int fill_psi_param_##name(void *obj, void *val)                \
+{                                                                            \
+    unsigned long value;                                                     \
+    struct psi_task_params *params = (struct psi_task_params *)obj;          \
+    if (get_unsigned_long_value(val, &value) != 0) {                         \
+        etmemd_log(ETMEMD_LOG_ERR, "PSI fb param: %s: %s invalid!\n", #name, val); \
+        return -1;                                                           \
+    }                                                                        \
+    params->name = value;                                                    \
+    etmemd_log(ETMEMD_LOG_DEBUG, "PSI fb param: %s: %lu\n", #name, value);   \
+    free(val);                                                               \
+    return 0;                                                                \
 }
+
+DEFINE_FILL_PARAM_STR_TO_UL(limit_min_bytes);
+DEFINE_FILL_PARAM_STR_TO_UL(reclaim_max_bytes);
 
 static struct config_item g_psi_task_config_items[] = {
     {"cg_path", STR_VAL, fill_psi_param_cg_path, false},
@@ -874,6 +878,7 @@ static struct config_item g_psi_task_config_items[] = {
     {"reclaim_rate_min", DOUBLE_VAL, fill_psi_param_reclaim_rate_min, true},
     {"limit_min_bytes", STR_VAL, fill_psi_param_limit_min_bytes, true},
     {"limit_min_ratio", DOUBLE_VAL, fill_psi_param_limit_min_ratio, true},
+    {"reclaim_max_bytes", STR_VAL, fill_psi_param_reclaim_max_bytes, true},
 };
 
 static int psi_fill_task(GKeyFile *config, struct task *tk)
@@ -893,6 +898,7 @@ static int psi_fill_task(GKeyFile *config, struct task *tk)
     params->reclaim_rate_min = ONE_PERCENT;
     params->gather = 0;
     params->limit_min_ratio = TEN_PERCENT;
+    params->reclaim_max_bytes = SIZE_1G;
 
     if (parse_file_config(config, TASK_GROUP,
                           g_psi_task_config_items,

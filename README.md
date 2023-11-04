@@ -600,6 +600,7 @@ limit_min_bytes=209715200
 |reclaim_rate|	每轮回收内存的比例|	否|	是|	reclaim_rate=0.01，每轮回收百分之一的可回收内存，运行过程中会自适应增大或减小，默认为0.05|
 |reclaim_rate_max|	每轮回收内存的最大比例|	否|	是|	reclaim_rate_max=0.5，reclaim_rate最大增长到该值，默认为0.5|
 |reclaim_rate_min|	每轮回收内存的最小比例|	否|	是|	reclaim_rate_min=0.01，reclaim_rate最小减到该值，默认为0.01|
+|reclaim_max_bytes|	每轮回收内存的最大值|	否|	是|	reclaim_max_bytes=209715200，每轮最多回收200M，默认为1G|
 |limit_min_bytes|	开始回收的内存阈值|	否|	是|	字节为单位，limit_min_bytes=209715200，该cgroup占用200M内存以上的部分才回收|
 |limit_min_ratio|	按内存容量的比例启动回收|	否|	是|	limit_min_ratio=0.2，该cgroup占memory.limit_in_bytes 20%内存以上的部分才回收|
 

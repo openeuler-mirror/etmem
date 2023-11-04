@@ -31,6 +31,7 @@ struct psi_task_params {
     int gather;
     struct psi_eng_params *eng_params;
     unsigned long limit_min_bytes;
+    unsigned long reclaim_max_bytes;      /* max bytes every reclaim */
     double limit_min_ratio;               /* ratio of memory.limit_in_bytes */
     struct psi_task_params *next;
 };
