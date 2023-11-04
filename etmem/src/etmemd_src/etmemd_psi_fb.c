@@ -173,16 +173,14 @@ enum psi_pre {
 
 static int set_memory_pressure(struct pressure *pressure_str, char *avg_str, char *avg_num)
 {
-    float f_avg_num = strtof(avg_num, NULL);
-
     if (strcmp(avg_str, "avg10") == 0) {
-        pressure_str->avg10 = f_avg_num;
+        pressure_str->avg10 = strtof(avg_num, NULL);
     } else if (strcmp(avg_str, "avg60") == 0) {
-        pressure_str->avg60 = f_avg_num;
+        pressure_str->avg60 = strtof(avg_num, NULL);
     } else if (strcmp(avg_str, "avg300") == 0) {
-        pressure_str->avg300 = f_avg_num;
+        pressure_str->avg300 = strtof(avg_num, NULL);
     } else if (strcmp(avg_str, "total") == 0) {
-        pressure_str->total = f_avg_num;
+        get_unsigned_long_value(avg_num, &pressure_str->total);
     } else {
         return -1;
     }
@@ -193,15 +191,16 @@ static int set_memory_pressure(struct pressure *pressure_str, char *avg_str, cha
 static int get_memory_pressure_num(char *getline, struct memory_pressure *mm_pressure, enum psi_pre pre_type)
 {
     char *pair = NULL;
-    char *pressure_str = getline + strlen(SOME_PRESSURE);
-    struct pressure *pressure_msg = (pre_type == SOME ? &mm_pressure->some_pre :
-                                                       &mm_pressure->full_pre);
     char *saveptr_pre = NULL;
     char *saveptr_avg = NULL;
     char *pDelimiter = " ";
     char *avg_delim = "=";
     char *avg_str = NULL;
     char *avg_num = NULL;
+    char *pressure_str = getline + (pre_type == SOME ? strlen(SOME_PRESSURE) :
+		                                       strlen(FULL_PRESSURE));
+    struct pressure *pressure_msg = (pre_type == SOME ? &mm_pressure->some_pre :
+                                                       &mm_pressure->full_pre);
 
     for (pair = strtok_r(pressure_str, pDelimiter, &saveptr_pre); pair != NULL;
          pair = strtok_r(NULL, pDelimiter, &saveptr_pre)) {
@@ -209,6 +208,7 @@ static int get_memory_pressure_num(char *getline, struct memory_pressure *mm_pre
         if (avg_str == NULL) {
             return -1;
         }
+
         avg_num = strtok_r(NULL, avg_delim, &saveptr_avg);
         if (avg_num == NULL) {
             return -1;
@@ -223,34 +223,35 @@ static int get_memory_pressure_num(char *getline, struct memory_pressure *mm_pre
     return 0;
 }
 
-static int get_memory_pressure(const char *cg_pressure_path, struct memory_pressure *mm_pressure)
+static int get_memory_pressure_some(const char *cg_pressure_path, struct memory_pressure *mm_pressure)
 {
     FILE *file = NULL;
     char get_line[FILE_LINE_MAX_LEN] = {};
     int ret = -1;
-    enum psi_pre pre_type;
 
     file = fopen(cg_pressure_path, "r");
     if (file == NULL) {
         etmemd_log(ETMEMD_LOG_ERR, "fopen %s failed", cg_pressure_path);
         return -1;
     }
+    etmemd_log(ETMEMD_LOG_DEBUG, "read psi from %s", cg_pressure_path);
 
-    while (fgets(get_line, FILE_LINE_MAX_LEN - 1, file) != NULL) {
+    if (fgets(get_line, FILE_LINE_MAX_LEN - 1, file) != NULL) {
+        etmemd_log(ETMEMD_LOG_DEBUG, "psi: %s", get_line);
+        if (get_line[strlen(get_line)-1] == '\n') {
+            get_line[strlen(get_line)-1] = '\0';
+        }
         if (strncmp(get_line, SOME_PRESSURE, strlen(SOME_PRESSURE))) {
-            pre_type = SOME;
-        } else if (strncmp(get_line, FULL_PRESSURE, strlen(FULL_PRESSURE))) {
-            pre_type = FULL;
+            etmemd_log(ETMEMD_LOG_ERR, "get psi some error: %s", get_line);
+        }
+
+        if (get_memory_pressure_num(get_line, mm_pressure, SOME) != 0) {
+            etmemd_log(ETMEMD_LOG_ERR, "parse psi some num error: %s", get_line);
         } else {
-            continue;
+            ret = 0;
         }
-
-        if (get_memory_pressure_num(get_line, mm_pressure, pre_type) != 0) {
-            break;
-        }
-
-        ret = 0;
-        break;
+    } else {
+        etmemd_log(ETMEMD_LOG_ERR, "failed to get PSI from path: %s", cg_pressure_path);
     }
 
     (void)fclose(file);
@@ -452,7 +453,7 @@ static bool validate_pressure(const char *cg_pressure_path, struct psi_task_para
         return false;
     }
 
-    if (get_memory_pressure(mm_pressure_filename, &mm_pressure) != 0) {
+    if (get_memory_pressure_some(mm_pressure_filename, &mm_pressure) != 0) {
         etmemd_log(ETMEMD_LOG_ERR, "get memory pressure form cgroup failed.");
         free(mm_pressure_filename);
         return false;
