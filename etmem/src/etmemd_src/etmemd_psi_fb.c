@@ -19,6 +19,9 @@
 #include <unistd.h>
 #include <securec.h>
 #include <math.h>
+#include <glob.h>
+#include <sys/types.h>
+#include <sys/stat.h>
 
 #include "securec.h"
 #include "etmemd_log.h"
@@ -49,15 +52,17 @@
 #define min(a, b)                       ((a) > (b) ? (b) : (a))
 
 
-static void update_reclaim_rate(struct psi_task_params *p, bool validate)
+static void update_reclaim_rate(struct psi_cg_path *p, bool validate,
+                                double reclaim_rate_max,
+                                double reclaim_rate_min)
 {
     p->gather = validate ? max(0, p->gather + 1) : min(0, p->gather -1);
     if (p->gather >= UPGRADE_THRESHOLD) {
-        p->reclaim_rate = min(p->reclaim_rate + RATE_STRIDE, p->reclaim_rate_max);
+        p->reclaim_rate = min(p->reclaim_rate + RATE_STRIDE, reclaim_rate_max);
         p->gather = 0;
         etmemd_log(ETMEMD_LOG_DEBUG, "increase reclaim rate to %f", p->reclaim_rate);
     } else if (p->gather <= DOWNGRADE_THRESHOLD) {
-        p->reclaim_rate = max(p->reclaim_rate - RATE_STRIDE, p->reclaim_rate_min);
+        p->reclaim_rate = max(p->reclaim_rate - RATE_STRIDE, reclaim_rate_min);
         p->gather = 0;
         etmemd_log(ETMEMD_LOG_DEBUG, "decrease reclaim rate to %f", p->reclaim_rate);
     }
@@ -79,11 +84,26 @@ static void psi_next_working_params(struct psi_task_params **params)
 #define psi_factory_foreach_pid_params(iter, factory) \
     for ((iter) = (factory)->working_head; (iter) != NULL; (iter) = (iter)->next)
 
+static void release_task_cg_path(struct psi_task_params *params)
+{
+    struct psi_cg_path *tmp_cg_path = NULL;
+
+    while (params->cg_path) {
+        tmp_cg_path = params->cg_path->next;
+        free(params->cg_path->path);
+        free(params->cg_path);
+        params->cg_path_cnt--;
+        params->cg_path = tmp_cg_path;
+    }
+
+    params->cg_path = NULL;
+    params->cg_path_cnt = 0;
+}
+
 static void free_task_params(struct psi_task_params *params)
 {
     if (params->cg_path != NULL) {
-        free(params->cg_path);
-        params->cg_path = NULL;
+        release_task_cg_path(params);
     }
     free(params);
 }
@@ -432,7 +452,7 @@ static int read_from_cgroup_vmstat(const char *cg_path, const char *file_name,
     return ret;
 }
 
-static bool validate_pressure(const char *cg_pressure_path, struct psi_task_params *task_params)
+static bool validate_pressure(const char *cg_pressure_path, double task_pressure)
 {
     struct memory_pressure mm_pressure;
     char *mm_pressure_filename = NULL;
@@ -462,12 +482,11 @@ static bool validate_pressure(const char *cg_pressure_path, struct psi_task_para
     }
 
     free(mm_pressure_filename);
-    /* should we do the io pressure */
     return max(mm_pressure.some_pre.avg10, mm_pressure.some_pre.avg60) <
-           task_params->pressure;
+           task_pressure;
 }
 
-static int get_reclaimable_bytes(struct psi_task_params *task_params, unsigned long *reclaimable_bytes)
+static int get_reclaimable_bytes(const char *cg_path, unsigned long *reclaimable_bytes)
 {
     unsigned long inactive_file = 0;
     unsigned long active_file = 0;
@@ -480,13 +499,13 @@ static int get_reclaimable_bytes(struct psi_task_params *task_params, unsigned l
     unsigned long swapable;
     unsigned long swapfree;
 
-    if (read_from_cgroup_vmstat(task_params->cg_path, "memory.stat",
+    if (read_from_cgroup_vmstat(cg_path, "memory.stat",
                                 &inactive_file, "total_inactive_file") != 0) {
         etmemd_log(ETMEMD_LOG_ERR, "read from cgroup vmstat failed.");
         return -1;
     }
 
-    if (read_from_cgroup_vmstat(task_params->cg_path, "memory.stat",
+    if (read_from_cgroup_vmstat(cg_path, "memory.stat",
                                 &active_file, "total_active_file") != 0) {
         etmemd_log(ETMEMD_LOG_ERR, "read from cgroup vmstat failed.");
         return -1;
@@ -494,25 +513,25 @@ static int get_reclaimable_bytes(struct psi_task_params *task_params, unsigned l
 
     file_size = inactive_file + active_file;
 
-    if (read_from_cgroup_vmstat(task_params->cg_path, "memory.stat",
+    if (read_from_cgroup_vmstat(cg_path, "memory.stat",
                                 &inactive_anon, "total_inactive_anon") != 0) {
         etmemd_log(ETMEMD_LOG_ERR, "read from cgroup vmstat failed.");
         return -1;
     }
 
-    if (read_from_cgroup_vmstat(task_params->cg_path, "memory.stat",
+    if (read_from_cgroup_vmstat(cg_path, "memory.stat",
                                 &active_anon, "total_active_anon") != 0) {
         etmemd_log(ETMEMD_LOG_ERR, "read from cgroup vmstat failed.");
         return -1;
     }
 
-    if (read_from_cgroup_file(task_params->cg_path, "memory.memsw.limit_in_bytes",
+    if (read_from_cgroup_file(cg_path, "memory.memsw.limit_in_bytes",
                               &memsw_limit_opt) != 0) {
         etmemd_log(ETMEMD_LOG_ERR, "read memory.memsw.limit_in_bytes failed.");
         return -1;
     }
 
-    if (read_from_cgroup_file(task_params->cg_path, "memory.memsw.usage_in_bytes",
+    if (read_from_cgroup_file(cg_path, "memory.memsw.usage_in_bytes",
                               &memsw_usage_opt) != 0) {
         etmemd_log(ETMEMD_LOG_ERR, "read memory.memsw.usage_in_bytes failed.");
         return -1;
@@ -528,11 +547,11 @@ static int get_reclaimable_bytes(struct psi_task_params *task_params, unsigned l
 }
 
 #define LIMIT_HUGE_VALUE  (LONG_MAX/2)
-static int get_min_by_ratio(struct psi_task_params *task_params, unsigned long *value)
+static int get_min_by_ratio(const char *cg_path, unsigned long *value, double task_limit_min_ratio)
 {
     unsigned long memlimit = 0;
 
-    if (read_from_cgroup_file(task_params->cg_path, "memory.limit_in_bytes",
+    if (read_from_cgroup_file(cg_path, "memory.limit_in_bytes",
                                 &memlimit) != 0) {
         return -1;
     }
@@ -543,11 +562,13 @@ static int get_min_by_ratio(struct psi_task_params *task_params, unsigned long *
         return 0;
     }
 
-    *value = memlimit * task_params->limit_min_ratio;
+    *value = memlimit * task_limit_min_ratio;
     return 0;
 }
 
-static int get_limit_minbytes(struct psi_task_params *task_params, unsigned long *value)
+static int get_limit_minbytes(const char *cg_path, unsigned long *value,
+                              unsigned long task_limit_min_bytes,
+                              double task_limit_min_ratio)
 {
     unsigned long memory_usage_in_bytes = 0;
     unsigned long reclaimable_bytes;
@@ -557,35 +578,35 @@ static int get_limit_minbytes(struct psi_task_params *task_params, unsigned long
     unsigned long memory_low = 0;
     unsigned long min_for_ratio = 0;
 
-    if (read_from_cgroup_file(task_params->cg_path, "memory.usage_in_bytes",
+    if (read_from_cgroup_file(cg_path, "memory.usage_in_bytes",
                               &memory_usage_in_bytes) != 0) {
         etmemd_log(ETMEMD_LOG_ERR, "read_from_cgroup_file memory.usage_in_bytes failed.");
         return -1;
     }
 
-    if (get_reclaimable_bytes(task_params, &reclaimable_bytes) != 0) {
+    if (get_reclaimable_bytes(cg_path, &reclaimable_bytes) != 0) {
         etmemd_log(ETMEMD_LOG_ERR, "get_reclaimable_bytes failed.");
         return -1;
     }
 
     unreclaimable_maybe = memory_usage_in_bytes > reclaimable_bytes ?
                           (memory_usage_in_bytes - reclaimable_bytes) : 0;
-    limit_min_bytes = task_params->limit_min_bytes + unreclaimable_maybe;
+    limit_min_bytes = task_limit_min_bytes + unreclaimable_maybe;
 
-    if (read_from_cgroup_file(task_params->cg_path, "memory.min",
+    if (read_from_cgroup_file(cg_path, "memory.min",
                               &memory_min) != 0) {
         etmemd_log(ETMEMD_LOG_ERR, "memory_min failed.");
         return -1;
     }
     limit_min_bytes = max(limit_min_bytes, memory_min);
 
-    if (read_from_cgroup_file(task_params->cg_path, "memory.low",
+    if (read_from_cgroup_file(cg_path, "memory.low",
                               &memory_low) != 0) {
         return -1;
     }
     limit_min_bytes = max(limit_min_bytes, memory_low);
 
-    if (get_min_by_ratio(task_params, &min_for_ratio) != 0) {
+    if (get_min_by_ratio(cg_path, &min_for_ratio, task_limit_min_ratio) != 0) {
         return -1;
     }
     limit_min_bytes = max(limit_min_bytes, min_for_ratio);
@@ -597,9 +618,9 @@ static int get_limit_minbytes(struct psi_task_params *task_params, unsigned long
     return 0;
 }
 
-static int reclaim_by_memory_claim(struct psi_task_params *task_params, unsigned long reclaim_size)
+static int reclaim_by_memory_claim(const char *cg_path, unsigned long reclaim_size)
 {
-    if (write_cgroup_file(task_params->cg_path, "memory.reclaim", reclaim_size) != 0) {
+    if (write_cgroup_file(cg_path, "memory.reclaim", reclaim_size) != 0) {
         etmemd_log(ETMEMD_LOG_ERR, "memory reclaim failed.");
         return -1;
     }
@@ -612,46 +633,60 @@ static int psi_do_reclaim(struct psi_task_params *task_params)
     unsigned long limit_min_bytes_opt = 0;
     unsigned long current_mem = 0;
     unsigned long reclaim_size;
+    struct psi_cg_path *task_cg_path_iter = NULL;
 
-    /* check the pressure is high or not */
-    if (!validate_pressure(task_params->cg_path, task_params)) {
-        update_reclaim_rate(task_params, false);
-        etmemd_log(ETMEMD_LOG_DEBUG, "memory pressure is high, should not reclaim");
-        return 0;
+    task_cg_path_iter = task_params->cg_path;
+    while (task_cg_path_iter != NULL) {
+        /* check the pressure is high or not */
+        if (!validate_pressure(task_cg_path_iter->path, task_params->pressure)) {
+            update_reclaim_rate(task_cg_path_iter, false,
+                                task_params->reclaim_rate_max,
+                                task_params->reclaim_rate_min);
+            etmemd_log(ETMEMD_LOG_DEBUG, "memory pressure is high, should not reclaim");
+            return 0;
+        }
+
+        /* get the limit min bytes should leave in memory */
+        if (get_limit_minbytes(task_cg_path_iter->path, &limit_min_bytes_opt,
+                               task_params->limit_min_bytes,
+                               task_params->limit_min_ratio) != 0) {
+            return -1;
+        }
+
+        if (read_from_cgroup_file(task_cg_path_iter->path, "memory.usage_in_bytes",
+                                &current_mem) != 0) {
+            etmemd_log(ETMEMD_LOG_ERR, "get current_mem failed.");
+            return -1;
+        }
+
+        etmemd_log(ETMEMD_LOG_DEBUG, "current mem: %lu limit: %lu", current_mem, limit_min_bytes_opt);
+        if (current_mem <= limit_min_bytes_opt) {
+            etmemd_log(ETMEMD_LOG_DEBUG, "current memory is below the limit min bytes, no need to swap.");
+            return 0;
+        }
+
+        reclaim_size = (unsigned long)(current_mem - limit_min_bytes_opt) * task_params->reclaim_rate;
+        reclaim_size = min(reclaim_size, task_params->reclaim_max_bytes);
+        reclaim_size &= ~0xFFF;
+
+        etmemd_log(ETMEMD_LOG_DEBUG,
+                   "cg_path: %s should reclaim size: %lu, current: %lu, limit: %lu, reclaim_rate: %.2f",
+                   task_cg_path_iter->path, reclaim_size, current_mem,
+                   limit_min_bytes_opt, task_params->reclaim_rate);
+
+        if (reclaim_size == 0) {
+            return 0;
+        }
+        /* do reclaim */
+        if (reclaim_by_memory_claim(task_cg_path_iter->path, reclaim_size) != 0) {
+            return -1;
+        }
+        update_reclaim_rate(task_cg_path_iter, true,
+                            task_params->reclaim_rate_max,
+                            task_params->reclaim_rate_min);
+
+        task_cg_path_iter = task_cg_path_iter->next;
     }
-
-    /* get the limit min bytes should leave in memory */
-    if (get_limit_minbytes(task_params, &limit_min_bytes_opt) != 0) {
-        return -1;
-    }
-
-    if (read_from_cgroup_file(task_params->cg_path, "memory.usage_in_bytes",
-                              &current_mem) != 0) {
-        etmemd_log(ETMEMD_LOG_ERR, "get current_mem failed.");
-        return -1;
-    }
-
-    etmemd_log(ETMEMD_LOG_DEBUG, "current mem: %lu limit: %lu", current_mem, limit_min_bytes_opt);
-    if (current_mem <= limit_min_bytes_opt) {
-        etmemd_log(ETMEMD_LOG_DEBUG, "current memory is below the limit min bytes, no need to swap.");
-        return 0;
-    }
-
-    reclaim_size = (unsigned long)(current_mem - limit_min_bytes_opt) * task_params->reclaim_rate;
-    reclaim_size = min(reclaim_size, task_params->reclaim_max_bytes);
-    reclaim_size &= ~0xFFF;
-
-    etmemd_log(ETMEMD_LOG_DEBUG, "should reclaim size: %lu, current: %lu, limit: %lu, reclaim_rate: %.2f",
-                                  reclaim_size, current_mem, limit_min_bytes_opt, task_params->reclaim_rate);
-
-    if (reclaim_size == 0) {
-        return 0;
-    }
-    /* do reclaim */
-    if (reclaim_by_memory_claim(task_params, reclaim_size) != 0) {
-        return -1;
-    }
-    update_reclaim_rate(task_params, true);
 
     return 0;
 }
@@ -781,10 +816,11 @@ DEFINE_FILL_PARAM_DOUBLE(reclaim_rate_max);
 DEFINE_FILL_PARAM_DOUBLE(reclaim_rate_min);
 DEFINE_FILL_PARAM_DOUBLE(limit_min_ratio);
 
-static int check_cgroup_fs_path_valid(char *cgroup_task_path, char *cg_path,
-                                      unsigned int file_str_size, char *cg_name)
+static int check_cgroup_fs_path_valid(char *cgroup_task_path, const char *cg_path,
+                                      unsigned int file_str_size, const char *cg_name)
 {
     char resolve_path[PATH_MAX] = {0};
+
     if (snprintf_s(cgroup_task_path, file_str_size, file_str_size - 1,
                    "%s%s%s%s", SYS_CGROUP_FS, cg_name, "/",
                    cg_path) == -1) {
@@ -799,6 +835,143 @@ static int check_cgroup_fs_path_valid(char *cgroup_task_path, char *cg_path,
     }
 
     return 0;
+}
+
+static int check_cgroup_fs_path(const char *cg_path)
+{
+    unsigned int file_str_size;
+    char *cgroup_task_path = NULL;
+    int ret = -1;
+
+    /* check the /sys/fs/cgroup/cpuacct/name and memory is available */
+    file_str_size = strlen(SYS_CGROUP_FS) + strlen(CPUACCT) + 1 +
+                    strlen(cg_path) + 1;
+
+    cgroup_task_path = (char *)calloc(file_str_size, sizeof(char));
+    if (cgroup_task_path == NULL) {
+        etmemd_log(ETMEMD_LOG_ERR, "malloc for %s path fail\n", cg_path);
+        return -1;
+    }
+
+    if (check_cgroup_fs_path_valid(cgroup_task_path, cg_path,
+                                   file_str_size, CPUACCT) != 0) {
+        goto out;
+    }
+
+    if (memset_s(cgroup_task_path, file_str_size, 0, file_str_size) != EOK) {
+        etmemd_log(ETMEMD_LOG_ERR, "memset_s for cgroup_task_path fail\n", cg_path);
+        goto out;
+    }
+
+    if (check_cgroup_fs_path_valid(cgroup_task_path, cg_path,
+                                   file_str_size, MEMORY) != 0) {
+        goto out;
+    }
+
+    ret = 0;
+out:
+    free(cgroup_task_path);
+    return ret;
+}
+
+static struct psi_cg_path *alloc_psi_cg_path_node(size_t cgroup_path_len, const char *glob_path,
+                                                  size_t cpuacct_cg_len, double reclaim_rate)
+{
+    struct psi_cg_path *task_cg_path = (struct psi_cg_path *)calloc(1, sizeof(struct psi_cg_path));
+    if (task_cg_path == NULL) {
+        etmemd_log(ETMEMD_LOG_ERR, "calloc for psi cg path node failed.");
+        return NULL;
+    }
+
+    task_cg_path->path = (char *)calloc(cgroup_path_len, sizeof(char));
+    if (task_cg_path->path == NULL) {
+        etmemd_log(ETMEMD_LOG_ERR, "calloc for task cg path failed.");
+        free(task_cg_path);
+        return NULL;
+    }
+
+    if (memcpy_s(task_cg_path->path, cgroup_path_len,
+                 glob_path + cpuacct_cg_len,
+                 cgroup_path_len - cpuacct_cg_len) != 0) {
+        etmemd_log(ETMEMD_LOG_ERR, "memcpy for cg path failed.");
+        goto err;
+    }
+
+    if (check_cgroup_fs_path(task_cg_path->path) != 0) {
+        goto err;
+    }
+
+    task_cg_path->reclaim_rate = reclaim_rate;
+
+    return task_cg_path;
+
+err:
+    free(task_cg_path->path);
+    free(task_cg_path);
+    return NULL;
+}
+
+static int get_task_cg_path(const char *cgroup_task_path, struct psi_task_params *params)
+{
+    int ret;
+    size_t i;
+    glob_t buf;
+    struct stat fileinfo;
+    size_t cgroup_path_len;
+    size_t cpuacct_cg_len;
+    struct psi_cg_path *head_cg_path = NULL;
+    struct psi_cg_path *tail_cg_path = NULL;
+    struct psi_cg_path *alloc_cg_path = NULL;
+
+    ret = glob(cgroup_task_path, GLOB_NOSORT | GLOB_BRACE | GLOB_ERR,
+               NULL, &buf);
+    if (ret != 0) {
+        etmemd_log(ETMEMD_LOG_ERR, "glob get task cgroup failed. %s", cgroup_task_path);
+        return -1;
+    }
+
+    cpuacct_cg_len = strlen(SYS_CGROUP_FS) + strlen(CPUACCT);
+    for (i = 0; i < buf.gl_pathc; i++) {
+        ret = lstat(buf.gl_pathv[i], &fileinfo);
+        if (ret != 0) {
+            etmemd_log(ETMEMD_LOG_ERR, "lstat get file info failed. buf: %s",
+                       buf.gl_pathv[i]);
+            goto err;
+        }
+
+        if (S_ISDIR(fileinfo.st_mode)) {
+            cgroup_path_len = strlen(buf.gl_pathv[i]);
+            if (cgroup_path_len <= cpuacct_cg_len) {
+                etmemd_log(ETMEMD_LOG_ERR, "get cgroup path wrong. path: %s", buf.gl_pathv[i]);
+                goto err;
+            }
+
+            alloc_cg_path = alloc_psi_cg_path_node(cgroup_path_len, buf.gl_pathv[i],
+                                                   cpuacct_cg_len, params->reclaim_rate);
+            if (alloc_cg_path == NULL) {
+                goto err;
+            }
+
+            if (head_cg_path == NULL) {
+                head_cg_path = alloc_cg_path;
+                tail_cg_path = alloc_cg_path;
+            } else {
+                tail_cg_path->next = alloc_cg_path;
+                tail_cg_path = alloc_cg_path;
+            }
+
+            params->cg_path_cnt++;
+        }
+    }
+
+    params->cg_path = head_cg_path;
+    globfree(&buf);
+    return 0;
+
+err:
+    globfree(&buf);
+    release_task_cg_path(params);
+    return -1;
 }
 
 static int fill_psi_param_cg_path(void *obj, void *val)
@@ -823,27 +996,21 @@ static int fill_psi_param_cg_path(void *obj, void *val)
     cgroup_task_path = (char *)calloc(file_str_size, sizeof(char));
     if (cgroup_task_path == NULL) {
         etmemd_log(ETMEMD_LOG_ERR, "malloc for %s path fail\n", cg_path);
-        free(val);
         return -1;
     }
 
-    if (check_cgroup_fs_path_valid(cgroup_task_path, cg_path,
-                                   file_str_size, CPUACCT) != 0) {
+    if (snprintf_s(cgroup_task_path, file_str_size, file_str_size - 1,
+                   "%s%s%s%s", SYS_CGROUP_FS, CPUACCT, "/",
+                   cg_path) == -1) {
+        etmemd_log(ETMEMD_LOG_ERR, "snprintf for %s fail\n", cg_path);
         goto err_out;
     }
 
-    if (memset_s(cgroup_task_path, file_str_size, 0, file_str_size) != EOK) {
-        printf("memset_s for cgroup_task_path fail\n");
+    if (get_task_cg_path(cgroup_task_path, params) != 0) {
+        etmemd_log(ETMEMD_LOG_ERR, "get task cg path failed.");
         goto err_out;
     }
 
-    if (check_cgroup_fs_path_valid(cgroup_task_path, cg_path,
-                                   file_str_size, MEMORY) != 0) {
-        goto err_out;
-    }
-
-    free(cgroup_task_path);
-    params->cg_path = cg_path;
     return 0;
 
 err_out:
@@ -871,7 +1038,6 @@ DEFINE_FILL_PARAM_STR_TO_UL(limit_min_bytes);
 DEFINE_FILL_PARAM_STR_TO_UL(reclaim_max_bytes);
 
 static struct config_item g_psi_task_config_items[] = {
-    {"cg_path", STR_VAL, fill_psi_param_cg_path, false},
     {"pressure", DOUBLE_VAL, fill_psi_param_pressure, true},
     {"reclaim_rate", DOUBLE_VAL, fill_psi_param_reclaim_rate, true},
     {"reclaim_rate_max", DOUBLE_VAL, fill_psi_param_reclaim_rate_max, true},
@@ -879,6 +1045,7 @@ static struct config_item g_psi_task_config_items[] = {
     {"limit_min_bytes", STR_VAL, fill_psi_param_limit_min_bytes, true},
     {"limit_min_ratio", DOUBLE_VAL, fill_psi_param_limit_min_ratio, true},
     {"reclaim_max_bytes", STR_VAL, fill_psi_param_reclaim_max_bytes, true},
+    {"cg_path", STR_VAL, fill_psi_param_cg_path, false},
 };
 
 static int psi_fill_task(GKeyFile *config, struct task *tk)

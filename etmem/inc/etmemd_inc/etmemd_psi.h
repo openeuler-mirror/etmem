@@ -20,11 +20,18 @@ struct memory_pressure {
     struct pressure full_pre;
 };
 
+struct psi_cg_path {
+    double reclaim_rate;
+    int gather;
+    char *path;
+    struct psi_cg_path *next;
+};
+
 struct psi_task_params {
     enum pid_param_state state;
-    char *cg_path;
+    struct psi_cg_path *cg_path;
+    size_t cg_path_cnt;
     double pressure;                        /* benchmark swap rate */
-    double toleration;                      /* Dynamic accuracy */
     double reclaim_rate;
     double reclaim_rate_max;
     double reclaim_rate_min;
