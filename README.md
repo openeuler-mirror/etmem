@@ -595,7 +595,7 @@ limit_min_bytes=209715200
 |project|	声明所在的project|	是|	是|	64个字以内的字符串|
 |engine|	声明所在的engine|	是|	是|	64个字以内的字符串|
 |name|	task的名字|	是|	是|	64个字符以内的字符串|
-|cg_path|	要换出的cgroup名称|	是|	是|	实际的cgroup名称,最大长度64个字符，例如cg_path=isulad，则要求/sys/fs/cgroup/cpu,cpuacct/isulad/目录与/sys/fs/cgroup/memory/isulad/ 存在|
+|cg_path|	要换出的cgroup名称|	是|	是|	实际的cgroup名称,最大长度64个字符，例如cg_path=isulad，则要求/sys/fs/cgroup/cpu,cpuacct/isulad/目录与/sys/fs/cgroup/memory/isulad/ 存在；或cg_path=isulad/*,通配符方式配置，表明/sys/fs/cgroup/cpu/isulad/目录下的所有下一级目录均会添加到task中进行换出控制|
 |pressure|	pressure允许的压力大小|	否|	是|	pressure=0.1,不填写的话，默认为0.1|
 |reclaim_rate|	每轮回收内存的比例|	否|	是|	reclaim_rate=0.01，每轮回收百分之一的可回收内存，运行过程中会自适应增大或减小，默认为0.05|
 |reclaim_rate_max|	每轮回收内存的最大比例|	否|	是|	reclaim_rate_max=0.5，reclaim_rate最大增长到该值，默认为0.5|
