@@ -643,7 +643,7 @@ static int psi_do_reclaim(struct psi_task_params *task_params)
                                 task_params->reclaim_rate_max,
                                 task_params->reclaim_rate_min);
             etmemd_log(ETMEMD_LOG_DEBUG, "memory pressure is high, should not reclaim");
-            return 0;
+            goto next;
         }
 
         /* get the limit min bytes should leave in memory */
@@ -662,7 +662,7 @@ static int psi_do_reclaim(struct psi_task_params *task_params)
         etmemd_log(ETMEMD_LOG_DEBUG, "current mem: %lu limit: %lu", current_mem, limit_min_bytes_opt);
         if (current_mem <= limit_min_bytes_opt) {
             etmemd_log(ETMEMD_LOG_DEBUG, "current memory is below the limit min bytes, no need to swap.");
-            return 0;
+            goto next;
         }
 
         reclaim_size = (unsigned long)(current_mem - limit_min_bytes_opt) * task_params->reclaim_rate;
@@ -675,7 +675,7 @@ static int psi_do_reclaim(struct psi_task_params *task_params)
                    limit_min_bytes_opt, task_params->reclaim_rate);
 
         if (reclaim_size == 0) {
-            return 0;
+            goto next;
         }
         /* do reclaim */
         if (reclaim_by_memory_claim(task_cg_obj_iter->path, reclaim_size) != 0) {
@@ -685,6 +685,7 @@ static int psi_do_reclaim(struct psi_task_params *task_params)
                             task_params->reclaim_rate_max,
                             task_params->reclaim_rate_min);
 
+next:
         task_cg_obj_iter = task_cg_obj_iter->next;
     }
 
