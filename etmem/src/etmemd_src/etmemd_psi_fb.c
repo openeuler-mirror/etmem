@@ -52,7 +52,7 @@
 #define min(a, b)                       ((a) > (b) ? (b) : (a))
 
 
-static void update_reclaim_rate(struct psi_cg_path *p, bool validate,
+static void update_reclaim_rate(struct cg_obj *p, bool validate,
                                 double reclaim_rate_max,
                                 double reclaim_rate_min)
 {
@@ -84,26 +84,26 @@ static void psi_next_working_params(struct psi_task_params **params)
 #define psi_factory_foreach_pid_params(iter, factory) \
     for ((iter) = (factory)->working_head; (iter) != NULL; (iter) = (iter)->next)
 
-static void release_task_cg_path(struct psi_task_params *params)
+static void release_task_cg_obj(struct psi_task_params *params)
 {
-    struct psi_cg_path *tmp_cg_path = NULL;
+    struct cg_obj *tmp_cg_obj = NULL;
 
     while (params->cg_path) {
-        tmp_cg_path = params->cg_path->next;
+        tmp_cg_obj = params->cg_path->next;
         free(params->cg_path->path);
         free(params->cg_path);
-        params->cg_path_cnt--;
-        params->cg_path = tmp_cg_path;
+        params->cg_obj_cnt--;
+        params->cg_path = tmp_cg_obj;
     }
 
     params->cg_path = NULL;
-    params->cg_path_cnt = 0;
+    params->cg_obj_cnt = 0;
 }
 
 static void free_task_params(struct psi_task_params *params)
 {
     if (params->cg_path != NULL) {
-        release_task_cg_path(params);
+        release_task_cg_obj(params);
     }
     free(params);
 }
@@ -633,13 +633,13 @@ static int psi_do_reclaim(struct psi_task_params *task_params)
     unsigned long limit_min_bytes_opt = 0;
     unsigned long current_mem = 0;
     unsigned long reclaim_size;
-    struct psi_cg_path *task_cg_path_iter = NULL;
+    struct cg_obj *task_cg_obj_iter = NULL;
 
-    task_cg_path_iter = task_params->cg_path;
-    while (task_cg_path_iter != NULL) {
+    task_cg_obj_iter = task_params->cg_path;
+    while (task_cg_obj_iter != NULL) {
         /* check the pressure is high or not */
-        if (!validate_pressure(task_cg_path_iter->path, task_params->pressure)) {
-            update_reclaim_rate(task_cg_path_iter, false,
+        if (!validate_pressure(task_cg_obj_iter->path, task_params->pressure)) {
+            update_reclaim_rate(task_cg_obj_iter, false,
                                 task_params->reclaim_rate_max,
                                 task_params->reclaim_rate_min);
             etmemd_log(ETMEMD_LOG_DEBUG, "memory pressure is high, should not reclaim");
@@ -647,13 +647,13 @@ static int psi_do_reclaim(struct psi_task_params *task_params)
         }
 
         /* get the limit min bytes should leave in memory */
-        if (get_limit_minbytes(task_cg_path_iter->path, &limit_min_bytes_opt,
+        if (get_limit_minbytes(task_cg_obj_iter->path, &limit_min_bytes_opt,
                                task_params->limit_min_bytes,
                                task_params->limit_min_ratio) != 0) {
             return -1;
         }
 
-        if (read_from_cgroup_file(task_cg_path_iter->path, "memory.usage_in_bytes",
+        if (read_from_cgroup_file(task_cg_obj_iter->path, "memory.usage_in_bytes",
                                 &current_mem) != 0) {
             etmemd_log(ETMEMD_LOG_ERR, "get current_mem failed.");
             return -1;
@@ -671,21 +671,21 @@ static int psi_do_reclaim(struct psi_task_params *task_params)
 
         etmemd_log(ETMEMD_LOG_DEBUG,
                    "cg_path: %s should reclaim size: %lu, current: %lu, limit: %lu, reclaim_rate: %.2f",
-                   task_cg_path_iter->path, reclaim_size, current_mem,
+                   task_cg_obj_iter->path, reclaim_size, current_mem,
                    limit_min_bytes_opt, task_params->reclaim_rate);
 
         if (reclaim_size == 0) {
             return 0;
         }
         /* do reclaim */
-        if (reclaim_by_memory_claim(task_cg_path_iter->path, reclaim_size) != 0) {
+        if (reclaim_by_memory_claim(task_cg_obj_iter->path, reclaim_size) != 0) {
             return -1;
         }
-        update_reclaim_rate(task_cg_path_iter, true,
+        update_reclaim_rate(task_cg_obj_iter, true,
                             task_params->reclaim_rate_max,
                             task_params->reclaim_rate_min);
 
-        task_cg_path_iter = task_cg_path_iter->next;
+        task_cg_obj_iter = task_cg_obj_iter->next;
     }
 
     return 0;
@@ -874,40 +874,40 @@ out:
     return ret;
 }
 
-static struct psi_cg_path *alloc_psi_cg_path_node(size_t cgroup_path_len, const char *glob_path,
+static struct cg_obj *alloc_cg_obj_node(size_t cgroup_path_len, const char *glob_path,
                                                   size_t cpuacct_cg_len, double reclaim_rate)
 {
-    struct psi_cg_path *task_cg_path = (struct psi_cg_path *)calloc(1, sizeof(struct psi_cg_path));
-    if (task_cg_path == NULL) {
+    struct cg_obj *task_cg_obj = (struct cg_obj *)calloc(1, sizeof(struct cg_obj));
+    if (task_cg_obj == NULL) {
         etmemd_log(ETMEMD_LOG_ERR, "calloc for psi cg path node failed.");
         return NULL;
     }
 
-    task_cg_path->path = (char *)calloc(cgroup_path_len, sizeof(char));
-    if (task_cg_path->path == NULL) {
+    task_cg_obj->path = (char *)calloc(cgroup_path_len, sizeof(char));
+    if (task_cg_obj->path == NULL) {
         etmemd_log(ETMEMD_LOG_ERR, "calloc for task cg path failed.");
-        free(task_cg_path);
+        free(task_cg_obj);
         return NULL;
     }
 
-    if (memcpy_s(task_cg_path->path, cgroup_path_len,
+    if (memcpy_s(task_cg_obj->path, cgroup_path_len,
                  glob_path + cpuacct_cg_len,
                  cgroup_path_len - cpuacct_cg_len) != 0) {
         etmemd_log(ETMEMD_LOG_ERR, "memcpy for cg path failed.");
         goto err;
     }
 
-    if (check_cgroup_fs_path(task_cg_path->path) != 0) {
+    if (check_cgroup_fs_path(task_cg_obj->path) != 0) {
         goto err;
     }
 
-    task_cg_path->reclaim_rate = reclaim_rate;
+    task_cg_obj->reclaim_rate = reclaim_rate;
 
-    return task_cg_path;
+    return task_cg_obj;
 
 err:
-    free(task_cg_path->path);
-    free(task_cg_path);
+    free(task_cg_obj->path);
+    free(task_cg_obj);
     return NULL;
 }
 
@@ -919,9 +919,9 @@ static int get_task_cg_path(const char *cgroup_task_path, struct psi_task_params
     struct stat fileinfo;
     size_t cgroup_path_len;
     size_t cpuacct_cg_len;
-    struct psi_cg_path *head_cg_path = NULL;
-    struct psi_cg_path *tail_cg_path = NULL;
-    struct psi_cg_path *alloc_cg_path = NULL;
+    struct cg_obj *head_cg_obj = NULL;
+    struct cg_obj *tail_cg_obj = NULL;
+    struct cg_obj *alloc_cg_obj = NULL;
 
     ret = glob(cgroup_task_path, GLOB_NOSORT | GLOB_BRACE | GLOB_ERR,
                NULL, &buf);
@@ -946,31 +946,31 @@ static int get_task_cg_path(const char *cgroup_task_path, struct psi_task_params
                 goto err;
             }
 
-            alloc_cg_path = alloc_psi_cg_path_node(cgroup_path_len, buf.gl_pathv[i],
+            alloc_cg_obj = alloc_cg_obj_node(cgroup_path_len, buf.gl_pathv[i],
                                                    cpuacct_cg_len, params->reclaim_rate);
-            if (alloc_cg_path == NULL) {
+            if (alloc_cg_obj == NULL) {
                 goto err;
             }
 
-            if (head_cg_path == NULL) {
-                head_cg_path = alloc_cg_path;
-                tail_cg_path = alloc_cg_path;
+            if (head_cg_obj == NULL) {
+                head_cg_obj = alloc_cg_obj;
+                tail_cg_obj = alloc_cg_obj;
             } else {
-                tail_cg_path->next = alloc_cg_path;
-                tail_cg_path = alloc_cg_path;
+                tail_cg_obj->next = alloc_cg_obj;
+                tail_cg_obj = alloc_cg_obj;
             }
 
-            params->cg_path_cnt++;
+            params->cg_obj_cnt++;
         }
     }
 
-    params->cg_path = head_cg_path;
+    params->cg_path = head_cg_obj;
     globfree(&buf);
     return 0;
 
 err:
     globfree(&buf);
-    release_task_cg_path(params);
+    release_task_cg_obj(params);
     return -1;
 }
 
