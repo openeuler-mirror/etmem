@@ -39,6 +39,12 @@
 #define IDLE_SCAN_ADD_FLAGS     _IOW(IDLE_SCAN_MAGIC, 0x0, unsigned int)
 #define VMA_SCAN_ADD_FLAGS      _IOW(IDLE_SCAN_MAGIC, 0x2, unsigned int)
 #define ALL_SCAN_FLAGS          (SCAN_AS_HUGE | SCAN_IGN_HOST | VMA_SCAN_FLAG)
+#ifdef ENABLE_PMU
+#define PT_LEVEL_OFFEST          9
+#define PTE_OFFSET               12
+#define PMD_OFFEST               (PTE_OFFSET + PT_LEVEL_OFFEST)
+#define PUD_OFFEST               (PMD_OFFEST + PT_LEVEL_OFFEST)
+#endif
 
 enum page_idle_type {
     PTE_ACCESS = 0,     /* 4k page */
@@ -74,12 +80,12 @@ struct page_refs *etmemd_do_scan(const struct task_pid *tpid, const struct task 
 #ifdef ENABLE_PMU
 #define BITS_IN_INT (sizeof(int) * CHAR_BIT) // get the number of bits in an int
 /* Assume the hardware events count following a power-law distribution */
-inline int limit_count_to_loop(int count, int loop) 
+static inline int limit_count_to_loop(int count, int loop)
 {
-    int log2 =(int)(BITS_IN_INT - __builtin_clz(count));
+    int log2 = (int)(BITS_IN_INT - __builtin_clz(count + 1));
     return loop < log2 ? loop : log2;
 }
-void merge_page_refs(struct page_sort **page_sort, struct memory_grade **memory_grade);
+void merge_page_refs(struct task_pid *tpid, struct page_sort **page_sort, struct memory_grade **memory_grade);
 
 /* get the page_ref list from the buffer, if the pmu_sample thread has not been started, start the thread. */
 struct page_refs *etmemd_do_sample(struct task_pid *tpid, const struct task *tk);

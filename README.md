@@ -577,7 +577,7 @@ engine=psi
 name=psi_task
 cg_path=isulad
 pressure=0.1
-max_probe=0.01
+reclaim_rate=0.01
 limit_min_bytes=209715200
 ```
 
@@ -597,8 +597,12 @@ limit_min_bytes=209715200
 |name|	task的名字|	是|	是|	64个字符以内的字符串|
 |cg_path|	要换出的cgroup名称|	是|	是|	实际的cgroup名称,最大长度64个字符，例如cg_path=isulad，则要求/sys/fs/cgroup/cpu,cpuacct/isulad/目录与/sys/fs/cgroup/memory/isulad/ 存在|
 |pressure|	pressure允许的压力大小|	否|	是|	pressure=0.1,不填写的话，默认为0.1|
-|max_probe|	max_probe，每轮回收内存的比例|	否|	是|	max_probe=0.01，每轮回收百分之一的可回收内存，默认为0.01|
-|limit_min_bytes|	cgroup允许占用的内存阈值|	否|	是|	KB为单位，limit_min_bytes=209715200，允许占用200M内存|
+|reclaim_rate|	每轮回收内存的比例|	否|	是|	reclaim_rate=0.01，每轮回收百分之一的可回收内存，运行过程中会自适应增大或减小，默认为0.05|
+|reclaim_rate_max|	每轮回收内存的最大比例|	否|	是|	reclaim_rate_max=0.5，reclaim_rate最大增长到该值，默认为0.5|
+|reclaim_rate_min|	每轮回收内存的最小比例|	否|	是|	reclaim_rate_min=0.01，reclaim_rate最小减到该值，默认为0.01|
+|reclaim_max_bytes|	每轮回收内存的最大值|	否|	是|	reclaim_max_bytes=209715200，每轮最多回收200M，默认为1G|
+|limit_min_bytes|	开始回收的内存阈值|	否|	是|	字节为单位，limit_min_bytes=209715200，该cgroup占用200M内存以上的部分才回收|
+|limit_min_ratio|	按内存容量的比例启动回收|	否|	是|	limit_min_ratio=0.2，该cgroup占memory.limit_in_bytes 20%内存以上的部分才回收|
 
 3、加载配置工程与任务
 
@@ -649,9 +653,6 @@ etmem obj del -f /etc/etmem/psi_task.yaml  -s etmemd_socket
 $ cmake -DENABLE_PMU=ON ..  
 
 #### 项目依赖
-本项目依赖 uthash-devel, 可以通过指令直接安装;
-例如centos可以采用  yum install uthash-devel
-
 本项目依赖 libpfm4, 可以指令安装libpfm-devel;
 在执行安装指令之后, libpfm4 的头文件通常默认安装到路径 /usr/include/perfmon .
 要在cmake项目中正确包含头文件，需要设置环境变量 CMAKE_INCLUDE_PATH .

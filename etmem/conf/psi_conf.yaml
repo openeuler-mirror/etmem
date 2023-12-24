@@ -10,6 +10,8 @@ project=test
 [task]
 project=test
 engine=psi
+type=name
+value=cgroup_v1
 name=psi_task
 cg_path=isulad
 pressure=0.1

@@ -38,9 +38,31 @@
 #define SOME_PRESSURE                   "some"
 #define FULL_PRESSURE                   "full"
 #define MAX_CG_PATH_LEN                 64
-
+#define UPGRADE_THRESHOLD               5
+#define DOWNGRADE_THRESHOLD             (-2)
+#define FIFTY_PERCENT                   0.5
+#define ONE_PERCENT                     0.01
+#define RATE_STRIDE                     ONE_PERCENT
+#define TEN_PERCENT                     0.1
+#define SIZE_1G                         (1UL << 30)
 #define max(a, b)                       ((a) > (b) ? (a) : (b))
 #define min(a, b)                       ((a) > (b) ? (b) : (a))
+
+
+static void update_reclaim_rate(struct psi_task_params *p, bool validate)
+{
+    p->gather = validate ? max(0, p->gather + 1) : min(0, p->gather -1);
+    if (p->gather >= UPGRADE_THRESHOLD) {
+        p->reclaim_rate = min(p->reclaim_rate + RATE_STRIDE, p->reclaim_rate_max);
+        p->gather = 0;
+        etmemd_log(ETMEMD_LOG_DEBUG, "increase reclaim rate to %f", p->reclaim_rate);
+    } else if (p->gather <= DOWNGRADE_THRESHOLD) {
+        p->reclaim_rate = max(p->reclaim_rate - RATE_STRIDE, p->reclaim_rate_min);
+        p->gather = 0;
+        etmemd_log(ETMEMD_LOG_DEBUG, "decrease reclaim rate to %f", p->reclaim_rate);
+    }
+    return;
+}
 
 static void psi_next_working_params(struct psi_task_params **params)
 {
@@ -153,16 +175,14 @@ enum psi_pre {
 
 static int set_memory_pressure(struct pressure *pressure_str, char *avg_str, char *avg_num)
 {
-    float f_avg_num = strtof(avg_num, NULL);
-
     if (strcmp(avg_str, "avg10") == 0) {
-        pressure_str->avg10 = f_avg_num;
+        pressure_str->avg10 = strtof(avg_num, NULL);
     } else if (strcmp(avg_str, "avg60") == 0) {
-        pressure_str->avg60 = f_avg_num;
+        pressure_str->avg60 = strtof(avg_num, NULL);
     } else if (strcmp(avg_str, "avg300") == 0) {
-        pressure_str->avg300 = f_avg_num;
+        pressure_str->avg300 = strtof(avg_num, NULL);
     } else if (strcmp(avg_str, "total") == 0) {
-        pressure_str->total = f_avg_num;
+        get_unsigned_long_value(avg_num, &pressure_str->total);
     } else {
         return -1;
     }
@@ -173,15 +193,16 @@ static int set_memory_pressure(struct pressure *pressure_str, char *avg_str, cha
 static int get_memory_pressure_num(char *getline, struct memory_pressure *mm_pressure, enum psi_pre pre_type)
 {
     char *pair = NULL;
-    char *pressure_str = getline + strlen(SOME_PRESSURE);
-    struct pressure *pressure_msg = (pre_type == SOME ? &mm_pressure->some_pre :
-                                                       &mm_pressure->full_pre);
     char *saveptr_pre = NULL;
     char *saveptr_avg = NULL;
     char *pDelimiter = " ";
     char *avg_delim = "=";
     char *avg_str = NULL;
     char *avg_num = NULL;
+    char *pressure_str = getline + (pre_type == SOME ? strlen(SOME_PRESSURE) :
+		                                       strlen(FULL_PRESSURE));
+    struct pressure *pressure_msg = (pre_type == SOME ? &mm_pressure->some_pre :
+                                                       &mm_pressure->full_pre);
 
     for (pair = strtok_r(pressure_str, pDelimiter, &saveptr_pre); pair != NULL;
          pair = strtok_r(NULL, pDelimiter, &saveptr_pre)) {
@@ -189,6 +210,7 @@ static int get_memory_pressure_num(char *getline, struct memory_pressure *mm_pre
         if (avg_str == NULL) {
             return -1;
         }
+
         avg_num = strtok_r(NULL, avg_delim, &saveptr_avg);
         if (avg_num == NULL) {
             return -1;
@@ -203,41 +225,42 @@ static int get_memory_pressure_num(char *getline, struct memory_pressure *mm_pre
     return 0;
 }
 
-static int get_memory_pressure(const char *cg_pressure_path, struct memory_pressure *mm_pressure)
+static int get_memory_pressure_some(const char *cg_pressure_path, struct memory_pressure *mm_pressure)
 {
     FILE *file = NULL;
     char get_line[FILE_LINE_MAX_LEN] = {};
     int ret = -1;
-    enum psi_pre pre_type;
 
     file = fopen(cg_pressure_path, "r");
     if (file == NULL) {
         etmemd_log(ETMEMD_LOG_ERR, "fopen %s failed", cg_pressure_path);
         return -1;
     }
+    etmemd_log(ETMEMD_LOG_DEBUG, "read psi from %s", cg_pressure_path);
 
-    while (fgets(get_line, FILE_LINE_MAX_LEN - 1, file) != NULL) {
+    if (fgets(get_line, FILE_LINE_MAX_LEN - 1, file) != NULL) {
+        etmemd_log(ETMEMD_LOG_DEBUG, "psi: %s", get_line);
+        if (get_line[strlen(get_line)-1] == '\n') {
+            get_line[strlen(get_line)-1] = '\0';
+        }
         if (strncmp(get_line, SOME_PRESSURE, strlen(SOME_PRESSURE))) {
-            pre_type = SOME;
-        } else if (strncmp(get_line, FULL_PRESSURE, strlen(FULL_PRESSURE))) {
-            pre_type = FULL;
+            etmemd_log(ETMEMD_LOG_ERR, "get psi some error: %s", get_line);
+        }
+
+        if (get_memory_pressure_num(get_line, mm_pressure, SOME) != 0) {
+            etmemd_log(ETMEMD_LOG_ERR, "parse psi some num error: %s", get_line);
         } else {
-            continue;
+            ret = 0;
         }
-
-        if (get_memory_pressure_num(get_line, mm_pressure, pre_type) != 0) {
-            break;
-        }
-
-        ret = 0;
-        break;
+    } else {
+        etmemd_log(ETMEMD_LOG_ERR, "failed to get PSI from path: %s", cg_pressure_path);
     }
 
     (void)fclose(file);
     return ret;
 }
 
-static int get_cgorup_fd(const char *cg_path, const char *file_name, int mode)
+static int get_cgroup_fd(const char *cg_path, const char *file_name, int mode)
 {
     char *file_path = NULL;
     size_t file_str_size;
@@ -262,7 +285,7 @@ static int get_cgorup_fd(const char *cg_path, const char *file_name, int mode)
 
     fd = open(file_path, mode);
     if (fd == -1) {
-        etmemd_log(ETMEMD_LOG_ERR, "open file %s in fila_path: %s fail\n", file_path, file_name);
+        etmemd_log(ETMEMD_LOG_ERR, "open file %s in file_path: %s fail\n", file_path, file_name);
         free(file_path);
         return -1;
     }
@@ -279,7 +302,7 @@ static int read_from_cgroup_file(const char *cg_path, const char *file_name, uns
     u_int64_t size = 32;
     int ret = -1;
 
-    fd = get_cgorup_fd(cg_path, file_name, O_RDONLY);
+    fd = get_cgroup_fd(cg_path, file_name, O_RDONLY);
     if (fd == -1) {
         return -1;
     }
@@ -291,8 +314,9 @@ static int read_from_cgroup_file(const char *cg_path, const char *file_name, uns
     }
 
     recv_size = read(fd, buf, size);
-    if (recv_size <= 0) {
-        etmemd_log(ETMEMD_LOG_ERR, "read from cgroup fail\n");
+    if (recv_size < 0) {
+        etmemd_log(ETMEMD_LOG_ERR, "read from cgroup:%s file %s fail: %s\n",
+            cg_path, file_name, strerror(errno));
         goto free_buf;
     }
 
@@ -307,7 +331,7 @@ static int read_from_cgroup_file(const char *cg_path, const char *file_name, uns
         goto free_buf;
     }
 
-    ret =  0;
+    ret = 0;
 
 free_buf:
     free(buf);
@@ -319,12 +343,12 @@ err_out:
 static int write_cgroup_file(const char *cg_path, const char *file_name, unsigned long value)
 {
     int fd;
-    ssize_t write_size;
+    ssize_t res;
     unsigned char *buf = NULL;
     u_int64_t size = 32;
     int ret = -1;
 
-    fd = get_cgorup_fd(cg_path, file_name, O_WRONLY);
+    fd = get_cgroup_fd(cg_path, file_name, O_WRONLY);
     if (fd == -1) {
         return -1;
     }
@@ -341,13 +365,14 @@ static int write_cgroup_file(const char *cg_path, const char *file_name, unsigne
         goto free_buf;
     }
 
-    write_size = write(fd, buf, size);
-    if (write_size <= 0) {
-        etmemd_log(ETMEMD_LOG_ERR, "write to cgroup fail, write size: %d\n", write_size);
+    res = write(fd, buf, size);
+    if (res < 0) {
+        etmemd_log(ETMEMD_LOG_ERR, "write cgroup:%s file:%s, try to write: %s, fail: %s\n",
+            cg_path, file_name, buf, strerror(errno));
         goto free_buf;
     }
 
-    ret =  0;
+    ret = 0;
 
 free_buf:
     free(buf);
@@ -367,7 +392,7 @@ static int read_from_cgroup_vmstat(const char *cg_path, const char *file_name,
     char* pvalue = NULL;
     char* pDelimiter = " ";
 
-    fd = get_cgorup_fd(cg_path, file_name, O_RDONLY);
+    fd = get_cgroup_fd(cg_path, file_name, O_RDONLY);
     if (fd == -1) {
         return -1;
     }
@@ -430,7 +455,7 @@ static bool validate_pressure(const char *cg_pressure_path, struct psi_task_para
         return false;
     }
 
-    if (get_memory_pressure(mm_pressure_filename, &mm_pressure) != 0) {
+    if (get_memory_pressure_some(mm_pressure_filename, &mm_pressure) != 0) {
         etmemd_log(ETMEMD_LOG_ERR, "get memory pressure form cgroup failed.");
         free(mm_pressure_filename);
         return false;
@@ -502,6 +527,26 @@ static int get_reclaimable_bytes(struct psi_task_params *task_params, unsigned l
     return 0;
 }
 
+#define LIMIT_HUGE_VALUE  (LONG_MAX/2)
+static int get_min_by_ratio(struct psi_task_params *task_params, unsigned long *value)
+{
+    unsigned long memlimit = 0;
+
+    if (read_from_cgroup_file(task_params->cg_path, "memory.limit_in_bytes",
+                                &memlimit) != 0) {
+        return -1;
+    }
+
+    // treat a huge value as unconfigured
+    if (memlimit > LIMIT_HUGE_VALUE) {
+        *value = 0;
+        return 0;
+    }
+
+    *value = memlimit * task_params->limit_min_ratio;
+    return 0;
+}
+
 static int get_limit_minbytes(struct psi_task_params *task_params, unsigned long *value)
 {
     unsigned long memory_usage_in_bytes = 0;
@@ -509,6 +554,8 @@ static int get_limit_minbytes(struct psi_task_params *task_params, unsigned long
     unsigned long unreclaimable_maybe = 0;
     unsigned long limit_min_bytes = 0;
     unsigned long memory_min = 0;
+    unsigned long memory_low = 0;
+    unsigned long min_for_ratio = 0;
 
     if (read_from_cgroup_file(task_params->cg_path, "memory.usage_in_bytes",
                               &memory_usage_in_bytes) != 0) {
@@ -523,19 +570,29 @@ static int get_limit_minbytes(struct psi_task_params *task_params, unsigned long
 
     unreclaimable_maybe = memory_usage_in_bytes > reclaimable_bytes ?
                           (memory_usage_in_bytes - reclaimable_bytes) : 0;
-
     limit_min_bytes = task_params->limit_min_bytes + unreclaimable_maybe;
-
-    etmemd_log(ETMEMD_LOG_DEBUG, "limit_min_bytes: %lu task_params-: %lu unreclaimable_maybe: %lu",
-                                  limit_min_bytes, task_params->limit_min_bytes, unreclaimable_maybe);
 
     if (read_from_cgroup_file(task_params->cg_path, "memory.min",
                               &memory_min) != 0) {
         etmemd_log(ETMEMD_LOG_ERR, "memory_min failed.");
         return -1;
     }
-
     limit_min_bytes = max(limit_min_bytes, memory_min);
+
+    if (read_from_cgroup_file(task_params->cg_path, "memory.low",
+                              &memory_low) != 0) {
+        return -1;
+    }
+    limit_min_bytes = max(limit_min_bytes, memory_low);
+
+    if (get_min_by_ratio(task_params, &min_for_ratio) != 0) {
+        return -1;
+    }
+    limit_min_bytes = max(limit_min_bytes, min_for_ratio);
+
+    etmemd_log(ETMEMD_LOG_DEBUG,
+                "limit_min_bytes: %lu (unreclaim:%lu min:%lu low:%lu min_ratio:%lu)",
+                limit_min_bytes, unreclaimable_maybe, memory_min, memory_low, min_for_ratio);
     *value = limit_min_bytes;
     return 0;
 }
@@ -558,7 +615,8 @@ static int psi_do_reclaim(struct psi_task_params *task_params)
 
     /* check the pressure is high or not */
     if (!validate_pressure(task_params->cg_path, task_params)) {
-        etmemd_log(ETMEMD_LOG_DEBUG, "memory pressure is high, should not swap");
+        update_reclaim_rate(task_params, false);
+        etmemd_log(ETMEMD_LOG_DEBUG, "memory pressure is high, should not reclaim");
         return 0;
     }
 
@@ -579,16 +637,21 @@ static int psi_do_reclaim(struct psi_task_params *task_params)
         return 0;
     }
 
-    reclaim_size = (unsigned long)(current_mem - limit_min_bytes_opt) * task_params->max_probe;
+    reclaim_size = (unsigned long)(current_mem - limit_min_bytes_opt) * task_params->reclaim_rate;
+    reclaim_size = min(reclaim_size, task_params->reclaim_max_bytes);
     reclaim_size &= ~0xFFF;
 
-    etmemd_log(ETMEMD_LOG_DEBUG, "should reclaim size: %lu, current: %lu, limit: %lu, max_probe: %.2f",
-                                  reclaim_size, current_mem, limit_min_bytes_opt, task_params->max_probe);
+    etmemd_log(ETMEMD_LOG_DEBUG, "should reclaim size: %lu, current: %lu, limit: %lu, reclaim_rate: %.2f",
+                                  reclaim_size, current_mem, limit_min_bytes_opt, task_params->reclaim_rate);
 
+    if (reclaim_size == 0) {
+        return 0;
+    }
     /* do reclaim */
     if (reclaim_by_memory_claim(task_params, reclaim_size) != 0) {
         return -1;
     }
+    update_reclaim_rate(task_params, true);
 
     return 0;
 }
@@ -698,47 +761,25 @@ static void psi_clear_task(struct task *tk)
     tk->params = NULL;
 }
 
-static int fill_psi_param_pressure(void *obj, void *val)
-{
-    struct psi_task_params *params = (struct psi_task_params *)obj;
-    float value = (float)(*(double *)val);
-
-    params->pressure = value;
-    if (params->pressure <= 0) {
-        etmemd_log(ETMEMD_LOG_ERR, "PSI pressure is invalid.\n");
-        return -1;
-    }
-
-    return 0;
+#define DEFINE_FILL_PARAM_DOUBLE(name)                                   \
+static inline int fill_psi_param_##name(void *obj, void *val)                \
+{                                                                            \
+    struct psi_task_params *params = (struct psi_task_params *)obj;          \
+    double value = *(double *)val;                                           \
+    if (value <= 0) {                                                        \
+        etmemd_log(ETMEMD_LOG_ERR, "PSI fb param: %s: %f invalid!\n", #name, value); \
+        return -1;                                                           \
+    }                                                                        \
+    params->name = value;                                                    \
+    etmemd_log(ETMEMD_LOG_DEBUG, "PSI fb param: %s: %f\n", #name, value);    \
+    return 0;                                                                \
 }
 
-static int fill_psi_param_max_probe(void *obj, void *val)
-{
-    struct psi_task_params *params = (struct psi_task_params *)obj;
-    float value = (float)(*(double *)val);
-
-    params->max_probe = value;
-    if (params->max_probe <= 0) {
-        etmemd_log(ETMEMD_LOG_ERR, "PSI max_probe is invalid.\n");
-        return -1;
-    }
-
-    return 0;
-}
-
-static int fill_psi_param_toleration(void *obj, void *val)
-{
-    struct psi_task_params *params = (struct psi_task_params *)obj;
-    float value = (float)(*(double *)val);
-
-    params->toleration = value;
-    if (params->toleration <= 0) {
-        etmemd_log(ETMEMD_LOG_ERR, "PSI toleration is invalid.\n");
-        return -1;
-    }
-
-    return 0;
-}
+DEFINE_FILL_PARAM_DOUBLE(pressure);
+DEFINE_FILL_PARAM_DOUBLE(reclaim_rate);
+DEFINE_FILL_PARAM_DOUBLE(reclaim_rate_max);
+DEFINE_FILL_PARAM_DOUBLE(reclaim_rate_min);
+DEFINE_FILL_PARAM_DOUBLE(limit_min_ratio);
 
 static int check_cgroup_fs_path_valid(char *cgroup_task_path, char *cg_path,
                                       unsigned int file_str_size, char *cg_name)
@@ -811,28 +852,33 @@ err_out:
     return -1;
 }
 
-static int fill_psi_param_limit_min_bytes(void *obj, void *val)
-{
-    unsigned long limit_min_bytes;
-    struct psi_task_params *params = (struct psi_task_params *)obj;
-
-    if (get_unsigned_long_value(val, &limit_min_bytes) != 0) {
-        etmemd_log(ETMEMD_LOG_ERR, "get limit_min_bytes failed.\n");
-        return -1;
-    }
-
-    free(val);
-    params->limit_min_bytes = limit_min_bytes;
-
-    return 0;
+#define DEFINE_FILL_PARAM_STR_TO_UL(name)                                \
+static inline int fill_psi_param_##name(void *obj, void *val)                \
+{                                                                            \
+    unsigned long value;                                                     \
+    struct psi_task_params *params = (struct psi_task_params *)obj;          \
+    if (get_unsigned_long_value(val, &value) != 0) {                         \
+        etmemd_log(ETMEMD_LOG_ERR, "PSI fb param: %s: %s invalid!\n", #name, val); \
+        return -1;                                                           \
+    }                                                                        \
+    params->name = value;                                                    \
+    etmemd_log(ETMEMD_LOG_DEBUG, "PSI fb param: %s: %lu\n", #name, value);   \
+    free(val);                                                               \
+    return 0;                                                                \
 }
+
+DEFINE_FILL_PARAM_STR_TO_UL(limit_min_bytes);
+DEFINE_FILL_PARAM_STR_TO_UL(reclaim_max_bytes);
 
 static struct config_item g_psi_task_config_items[] = {
     {"cg_path", STR_VAL, fill_psi_param_cg_path, false},
     {"pressure", DOUBLE_VAL, fill_psi_param_pressure, true},
-    {"toleration", DOUBLE_VAL, fill_psi_param_toleration, true},
-    {"max_probe", DOUBLE_VAL, fill_psi_param_max_probe, true},
+    {"reclaim_rate", DOUBLE_VAL, fill_psi_param_reclaim_rate, true},
+    {"reclaim_rate_max", DOUBLE_VAL, fill_psi_param_reclaim_rate_max, true},
+    {"reclaim_rate_min", DOUBLE_VAL, fill_psi_param_reclaim_rate_min, true},
     {"limit_min_bytes", STR_VAL, fill_psi_param_limit_min_bytes, true},
+    {"limit_min_ratio", DOUBLE_VAL, fill_psi_param_limit_min_ratio, true},
+    {"reclaim_max_bytes", STR_VAL, fill_psi_param_reclaim_max_bytes, true},
 };
 
 static int psi_fill_task(GKeyFile *config, struct task *tk)
@@ -846,8 +892,13 @@ static int psi_fill_task(GKeyFile *config, struct task *tk)
     /* set the default pressure value : 0.1 */
     params->pressure = 0.1;
 
-    /* set max_probe 0.01, reclaim 1 / 100 size of reclaimable size */
-    params->max_probe = 0.01;
+    /* set reclaim rate 0.05, reclaim 5 / 100 size of reclaimable size */
+    params->reclaim_rate = 0.05;
+    params->reclaim_rate_max = FIFTY_PERCENT;
+    params->reclaim_rate_min = ONE_PERCENT;
+    params->gather = 0;
+    params->limit_min_ratio = TEN_PERCENT;
+    params->reclaim_max_bytes = SIZE_1G;
 
     if (parse_file_config(config, TASK_GROUP,
                           g_psi_task_config_items,
