@@ -71,15 +71,13 @@ pkg_search_module(GLIB2 REQUIRED glib-2.0)
 
 option(ENABLE_PMU "option for enable pmu sample support" OFF)
 if(ENABLE_PMU STREQUAL "ON")
- find_path(uthash_INCLUDE_DIRS uthash.h
-   PATHS ${UTHASH_DIRECTORY})
  find_path(perfmon_INCLUDE_DIRS pfmlib.h) 
  find_library(LPFM_LIBRARY
     NAMES pfm
  )       
 
- target_include_directories(etmemd PRIVATE ${uthash_INCLUDE_DIRS} ${perfmon_INCLUDE_DIRS})
- target_include_directories(etmemd_scan PRIVATE ${uthash_INCLUDE_DIRS} ${perfmon_INCLUDE_DIRS})
+ target_include_directories(etmemd PRIVATE ${perfmon_INCLUDE_DIRS})
+ target_include_directories(etmemd_scan PRIVATE ${perfmon_INCLUDE_DIRS})
  target_link_libraries(etmemd PRIVATE m ${LPFM_LIBRARY})
  add_definitions(-DENABLE_PMU)
 endif()

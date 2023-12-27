@@ -653,9 +653,6 @@ etmem obj del -f /etc/etmem/psi_task.yaml  -s etmemd_socket
 $ cmake -DENABLE_PMU=ON ..  
 
 #### 项目依赖
-本项目依赖 uthash-devel, 可以通过指令直接安装;
-例如centos可以采用  yum install uthash-devel
-
 本项目依赖 libpfm4, 可以指令安装libpfm-devel;
 在执行安装指令之后, libpfm4 的头文件通常默认安装到路径 /usr/include/perfmon .
 要在cmake项目中正确包含头文件，需要设置环境变量 CMAKE_INCLUDE_PATH .

@@ -269,7 +269,7 @@ scan_out:
 exit:
 #ifdef ENABLE_PMU
     if (((struct slide_params *)tk_pid->tk->params)->pmu_params != NULL) {
-        merge_page_refs(&page_sort, &memory_grade);
+        merge_page_refs(tk_pid, &page_sort, &memory_grade);
     }
 #endif
     clean_memory_grade_unexpected(&memory_grade);
@@ -375,6 +375,7 @@ static int fill_task_vma_updata_rate(void *obj, void *val)
         }
     }
     params->pmu_params->vma_updata_rate = value;
+    params->pmu_params->vma_updata_count = 0;
 
     return 0;
 }
@@ -383,6 +384,7 @@ static int fill_task_cpu_set_size(void *obj, void *val)
 {
     struct slide_params *params = (struct slide_params *)obj;
     int value = parse_to_int(val);
+    int ret;
     if (value <= 0) {
         etmemd_log(ETMEMD_LOG_WARN,
                    "cpu_set_size is abnormal, the reasonable value should bigger than 1 !\n");
@@ -397,6 +399,11 @@ static int fill_task_cpu_set_size(void *obj, void *val)
         }
     }
     params->pmu_params->cpu_set_size = value;
+    ret = pthread_mutex_init(&(params->pmu_params->vma_list_mutex), NULL);
+    if (ret != 0) {
+        etmemd_log(ETMEMD_LOG_ERR, "init vma_list_mutex failed.\n");
+        return -1;
+    }
 
     return 0;
 }
