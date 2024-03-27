@@ -532,7 +532,11 @@ etmem 通过获取 psi 压力信息，动态调节每轮的换出内存量，从
 #### 注意事项
 1. etmem 在使用PSI策略时，依赖内核kernel开启了PSI 配置，即内核cmdline 中需要添加启动参数：
 ```
-psi=1
+psi=1 psi_v1=1
+```
+并且确保内核打开了CGROUP_V1相关参数：
+```
+CONFIG_PSI_CGROUP_V1=y
 ```
 2. etmem 利用swap内存到其他介质的方式来实现内存扩展，因此，在启动etmem前需要先挂载swap分区，可以直接挂载磁盘作为swap分区，或利用ZRAM方式进行挂载。
 * 磁盘作为swap分区
@@ -575,7 +579,7 @@ project=test
 project=test
 engine=psi
 name=psi_task
-cg_path=isulad
+cg_dir=isulad
 pressure=0.1
 reclaim_rate=0.01
 limit_min_bytes=209715200
@@ -595,7 +599,7 @@ limit_min_bytes=209715200
 |project|	声明所在的project|	是|	是|	64个字以内的字符串|
 |engine|	声明所在的engine|	是|	是|	64个字以内的字符串|
 |name|	task的名字|	是|	是|	64个字符以内的字符串|
-|cg_path|	要换出的cgroup名称|	是|	是|	实际的cgroup名称,最大长度64个字符，例如cg_path=isulad，则要求/sys/fs/cgroup/cpu,cpuacct/isulad/目录与/sys/fs/cgroup/memory/isulad/ 存在；或cg_path=isulad/*,通配符方式配置，表明/sys/fs/cgroup/cpu/isulad/目录下的所有下一级目录均会添加到task中进行换出控制|
+|cg_dir|	要换出的cgroup名称|	是|	是|	实际的cgroup名称,最大长度64个字符，例如cg_dir=isulad，则要求/sys/fs/cgroup/cpu,cpuacct/isulad/目录与/sys/fs/cgroup/memory/isulad/ 存在；或cg_dir=isulad/*,通配符方式配置，表明/sys/fs/cgroup/cpu/isulad/目录下的所有下一级目录均会添加到task中进行换出控制|
 |pressure|	pressure允许的压力大小|	否|	是|	pressure=0.1,不填写的话，默认为0.1|
 |reclaim_rate|	每轮回收内存的比例|	否|	是|	reclaim_rate=0.01，每轮回收百分之一的可回收内存，运行过程中会自适应增大或减小，默认为0.05|
 |reclaim_rate_max|	每轮回收内存的最大比例|	否|	是|	reclaim_rate_max=0.5，reclaim_rate最大增长到该值，默认为0.5|
@@ -615,7 +619,7 @@ etmem obj add -f /etc/etmem/psi_conf.yaml  -s etmemd_socket
 etmem obj del -f /etc/etmem/psi_conf.yaml  -s etmemd_socket
 etmem obj add -f /etc/etmem/psi_conf.yaml  -s etmemd_socket
 ```
-若需要添加多个task对应的多个cg_path信息，可单独配置[task]单元字段，并进行添加：
+若需要添加多个task对应的多个cg_dir信息，可单独配置[task]单元字段，并进行添加：
 ```shell
 etmem obj del -f /etc/etmem/psi_task.yaml  -s etmemd_socket
 ```
