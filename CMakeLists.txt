@@ -13,8 +13,8 @@
 #  * Description:CMakeLists for three features of etmem to compile
 #  ******************************************************************************/
 
-project(etmem)
 cmake_minimum_required(VERSION ${CMAKE_MAJOR_VERSION}.${CMAKE_MINOR_VERSION})
+project(etmem)
 add_subdirectory(etmem)
 add_subdirectory(memRouter)
 add_subdirectory(userswap)
