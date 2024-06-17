@@ -14,6 +14,7 @@
  * **************************************************************************** */
 
 #include <stdlib.h>
+#include <unistd.h>
 #include <errno.h>
 #include <CUnit/Automated.h>
 #include "memdcd_policy.h"
