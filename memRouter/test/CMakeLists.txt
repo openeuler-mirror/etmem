@@ -13,6 +13,7 @@
 #  * Description: CMakeList for memRouter Unit test
 #  ******************************************************************************/
 
+cmake_minimum_required(VERSION ${CMAKE_MAJOR_VERSION}.${CMAKE_MINOR_VERSION})
 project(memRouter C)
 set(CMAKE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/test_bin)
 add_subdirectory(Unit)
