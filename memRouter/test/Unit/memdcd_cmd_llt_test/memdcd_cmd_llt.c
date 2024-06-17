@@ -20,6 +20,7 @@
 #include "memdcd_message.h"
 #include "memdcd_migrate.h"
 #include "alloc_memory.h"
+#include "memdcd_cmd.h"
 
 static void test_memdcd_cmd(void)
 {
