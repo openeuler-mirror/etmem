@@ -206,7 +206,7 @@ void *memdcd_daemon_start(const char *sock_path)
     memdcd_log(_LOG_INFO, "start listening on %s", sock_path);
     free(recv_buf);
     close(sock_fd);
-    return (sock_path);
+    return (void *)sock_path;
 free_buf:
     free(recv_buf);
 close_fd:
