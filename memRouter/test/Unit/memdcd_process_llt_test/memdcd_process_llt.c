@@ -35,8 +35,8 @@ static void test_memdcd_process(void)
         return;
     }
     init_mem_policy("./config/policy_threshold_GB.json");
-    CU_ASSERT_EQUAL(migrate_process_get_pages(-1, wrong_msg->memory_msg.vma.vma_addrs), -1);
-    CU_ASSERT_EQUAL(migrate_process_get_pages(get_pid_max() + 1, wrong_msg->memory_msg.vma.vma_addrs), -1);
+    CU_ASSERT_EQUAL(migrate_process_get_pages(-1, &(wrong_msg->memory_msg.vma)), -1);
+    CU_ASSERT_EQUAL(migrate_process_get_pages(get_pid_max() + 1, &(wrong_msg->memory_msg.vma)), -1);
     CU_ASSERT_EQUAL(migrate_process_get_pages(wrong_msg->memory_msg.pid, &(wrong_msg->memory_msg.vma)), -1);
     CU_ASSERT_EQUAL(migrate_process_get_pages(wrong_msg->memory_msg.pid, &(wrong_msg[1].memory_msg.vma)), 0);
     free_memory(wrong_msg, *msg_num);
