@@ -138,7 +138,7 @@ int format_msg(struct memdcd_message *msg, int msg_num, struct vma_addr **vma_ms
     *vma_msg = (struct vma_addr *)malloc(sizeof(struct vma_addr) * vma_total);
     if (vma_msg == NULL) {
         printf("malloc error in format_msg");
-        return NULL;
+        return -1;
     }
 
     long idx = 0;
