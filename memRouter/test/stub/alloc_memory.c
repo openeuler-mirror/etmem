@@ -80,7 +80,7 @@ struct memdcd_message *alloc_memory(int total_len, int *msg_num)
         if (posix_memalign((void **)&pages, pagesize, pagesize * MAX_VMA_NUM) != 0) {
             printf("memalign allocate memmory failed");
             for (int j = 0; j < i; j++) {
-                free(ret[j].memory_msg.vma.vma_addrs[0].vma.start_addr);
+                free((void *)ret[j].memory_msg.vma.vma_addrs[0].vma.start_addr);
             }
             free(ret);
             return NULL;
@@ -100,7 +100,7 @@ struct memdcd_message *alloc_memory(int total_len, int *msg_num)
     if (posix_memalign((void **)&page_end, pagesize, pagesize * last_msg_len) != 0) {
         printf("memalign allocate memmory failed");
         for (int i = 0; i < *msg_num - 1; i++) {
-            free(ret[i].memory_msg.vma.vma_addrs[0].vma.start_addr);
+            free((void *)ret[i].memory_msg.vma.vma_addrs[0].vma.start_addr);
         }
         free(ret);
         return NULL;
@@ -123,7 +123,7 @@ struct memdcd_message *alloc_memory(int total_len, int *msg_num)
 void free_memory(struct memdcd_message *msg, int msg_num)
 {
     for (int i = 0; i < msg_num; i++) {
-        free(msg[i].memory_msg.vma.vma_addrs[0].vma.start_addr);
+        free((void *)msg[i].memory_msg.vma.vma_addrs[0].vma.start_addr);
     }
     free(msg);
 }
