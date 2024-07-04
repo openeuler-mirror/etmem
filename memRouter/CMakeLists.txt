@@ -64,9 +64,11 @@ target_compile_options(memdcd PRIVATE -fsigned-char --param ssp-buffer-size=4 -f
 
 if(CONFIG_DEBUG STREQUAL "y")
     target_compile_options(memdcd PRIVATE -g)
+else()
+    set(OMIT_ALL_SYMBOL "-s")
 endif()
 
-target_link_libraries(memdcd PRIVATE pthread dl rt numa json-c cap -s)
+target_link_libraries(memdcd PRIVATE pthread dl rt numa json-c cap ${OMIT_ALL_SYMBOL})
 
 install(TARGETS memdcd
     PERMISSIONS OWNER_READ OWNER_EXECUTE GROUP_READ GROUP_EXECUTE
