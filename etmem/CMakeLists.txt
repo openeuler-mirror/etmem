@@ -97,10 +97,12 @@ target_compile_options(etmemd PRIVATE -fsigned-char -fno-omit-frame-pointer -Wal
 
 
 if(CONFIG_DEBUG STREQUAL "y")
- target_compile_options(etmemd PRIVATE -g)
+    target_compile_options(etmemd PRIVATE -g)
+else()
+    set(OMIT_ALL_SYMBOL "-s")
 endif()
 
-set_target_properties(etmemd PROPERTIES LINK_FLAGS "-s -fPIE -pie -fPIC -Wl,-z,relro,-z,now,-z,noexecstack -Wtrampolines")
+set_target_properties(etmemd PROPERTIES LINK_FLAGS "${OMIT_ALL_SYMBOL} -fPIE -pie -fPIC -Wl,-z,relro,-z,now,-z,noexecstack -Wtrampolines")
 target_link_libraries(etmemd PRIVATE pthread dl rt boundscheck numa ${GLIB2_LIBRARIES})
 
 if( ${ARCHITECTURE} STREQUAL "aarch64" )
@@ -118,10 +120,12 @@ endif()
 target_compile_options(etmem PRIVATE -fsigned-char -fno-omit-frame-pointer -Wall -Wextra -Wno-unused-parameter -Wno-missing-field-initializers -Wmissing-declarations -fno-strict-aliasing -Werror -Wformat -Wformat-security -D_GNU_SOURCE -fPIE -pie -fPIC -fstack-protector-strong -fno-common -DNDEBUG -O2 -D_FORTIFY_SOURCE=2 -Wall -Werror -Wl,-z,relro,-z,now,-z,noexecstack -Wtrampolines -pthread -Wno-pointer-sign -Wstrict-prototypes -Wold-style-definition -std=gnu99)
 
 if(CONFIG_DEBUG STREQUAL "y")
- target_compile_options(etmem PRIVATE -g)
+    target_compile_options(etmem PRIVATE -g)
+else()
+    set(OMIT_ALL_SYMBOL "-s")
 endif()
 
-set_target_properties(etmem PROPERTIES LINK_FLAGS "-s -fPIE -pie -fPIC -Wl,-z,relro,-z,now,-z,noexecstack -Wtrampolines")
+set_target_properties(etmem PROPERTIES LINK_FLAGS "${OMIT_ALL_SYMBOL} -fPIE -pie -fPIC -Wl,-z,relro,-z,now,-z,noexecstack -Wtrampolines")
 target_link_libraries(etmem PRIVATE pthread dl rt boundscheck)
 
 if( ${ARCHITECTURE} STREQUAL "aarch64" )
@@ -140,10 +144,12 @@ target_compile_options(etmemd_scan PRIVATE -fsigned-char -fno-omit-frame-pointer
 
 
 if(CONFIG_DEBUG STREQUAL "y")
- target_compile_options(etmemd_scan PRIVATE -g)
+    target_compile_options(etmemd_scan PRIVATE -g)
+else()
+    set(OMIT_ALL_SYMBOL "-s")
 endif()
 
-set_target_properties(etmemd_scan PROPERTIES LINK_FLAGS "-s -fPIE -pie -fPIC -Wl,-z,relro,-z,now,-z,noexecstack -Wtrampolines -Wl,--version-script=${ETMEMD_SRC_DIR}/etmemd_scan.version")
+set_target_properties(etmemd_scan PROPERTIES LINK_FLAGS "${OMIT_ALL_SYMBOL} -fPIE -pie -fPIC -Wl,-z,relro,-z,now,-z,noexecstack -Wtrampolines -Wl,--version-script=${ETMEMD_SRC_DIR}/etmemd_scan.version")
 target_link_libraries(etmemd_scan PRIVATE pthread dl rt boundscheck numa ${GLIB2_LIBRARIES})
 
 if( ${ARCHITECTURE} STREQUAL "aarch64" )
