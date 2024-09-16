@@ -59,7 +59,11 @@ openuler21.03、21.09、20.03 LTS SP2以及20.03 LTS SP3均支持etmem内存扩�
 
 #### 使用方法
 
-通过运行etmemd二进制运行服务端进程，例如：
+通过运行etmemd二进制运行服务端进程（单个终端），例如：
+
+$ etmemd -l 0 -s etmemd_socket &
+
+通过运行etmemd二进制运行服务端进程（多个终端），例如：
 
 $ etmemd -l 0 -s etmemd_socket
 
