@@ -78,6 +78,18 @@ struct walk_address {
 struct page_refs *etmemd_do_scan(const struct task_pid *tpid, const struct task *tk);
 
 #ifdef ENABLE_PMU
+struct pmu_params {
+    uint64_t sample_period;         /* Sampling mem access events every N instructions */
+    uint32_t vma_updata_rate;       /* Update after every N slide migrations */
+    uint32_t cpu_set_size;          /* Number of CPU cores sampled by one thread */
+    struct vma_info *vma_list;      /* Pointer to a linked list of VMA (Virtual Memory Area) information */
+    struct page_refs *page_refs_head;             /* Pointer to the head of the page_refs linked list */
+    struct sample_thread_meta *threads_meta_set;  /* Pointer to a set of sampled thread metadata */
+    int vma_updata_count;                         /* Counter for VMA update operations */
+    pthread_mutex_t vma_list_mutex;               /* Mutex for protecting access to the VMA list */
+    unsigned int pid;
+    int swap_flag;
+};
 #define BITS_IN_INT (sizeof(int) * CHAR_BIT) // get the number of bits in an int
 /* Assume the hardware events count following a power-law distribution */
 static inline int limit_count_to_loop(int count, int loop)
@@ -85,19 +97,19 @@ static inline int limit_count_to_loop(int count, int loop)
     int log2 = (int)(BITS_IN_INT - __builtin_clz(count + 1));
     return loop < log2 ? loop : log2;
 }
-void merge_page_refs(struct task_pid *tpid, struct page_sort **page_sort, struct memory_grade **memory_grade);
+void merge_page_refs(struct pmu_params *pmu_params, struct page_sort **page_sort, struct memory_grade **memory_grade);
 
 /* get the page_ref list from the buffer, if the pmu_sample thread has not been started, start the thread. */
-struct page_refs *etmemd_do_sample(struct task_pid *tpid, const struct task *tk);
+struct page_refs *etmemd_do_sample(struct pmu_params *pmu_params);
 
 /* stop pmu_sample thread when stopping the task. */
-void etmemd_stop_sample(struct task *tk);
+void etmemd_stop_sample(struct pmu_params *pmu_params);
 #else
-inline struct page_refs *etmemd_do_sample(struct task_pid *tpid, const struct task *tk)
+inline struct page_refs *etmemd_do_sample(struct pmu_params *pmu_params)
 {
     return NULL;
 }
-inline void etmemd_stop_sample(struct task *tk)
+inline void etmemd_stop_sample(struct pmu_params *pmu_params)
 {
 }
 #endif

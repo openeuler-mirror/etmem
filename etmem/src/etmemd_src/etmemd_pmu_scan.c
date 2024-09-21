@@ -27,7 +27,6 @@
 
 #include "etmemd_task.h"
 #include "etmemd_scan.h"
-#include "etmemd_slide.h"
 #include "etmemd_log.h"
 #include "securec.h"
 
@@ -79,7 +78,7 @@ struct sample_thread_args {
     struct perf_cpu_monitor **perf_cpu_monitors;
     int cpu_set_size; /* Specifies the number of CPU cores sampled by one thread. */
     int cpu_set_index; /* Specifies the index of the CPU core set. */
-    struct task_pid *tpid;
+    struct pmu_params *pmu_params;
 };
 
 struct vma_info {
@@ -102,29 +101,28 @@ const char *g_events[EVENT_NUM][ARCH_NUM] = {
     }
 };
 
-static struct vma_info *get_vma_info(const struct task_pid *tpid, uint64_t addr)
+static struct vma_info *get_vma_info(struct pmu_params *pmu_params, uint64_t addr)
 {
     struct vma_info *node;
-    struct slide_params *params = tpid->tk->params;
 
-    pthread_mutex_lock(&(params->pmu_params->vma_list_mutex));
-    for (node = params->pmu_params->vma_list; node != NULL; node = node->next) {
+    pthread_mutex_lock(&(pmu_params->vma_list_mutex));
+    for (node = pmu_params->vma_list; node != NULL; node = node->next) {
         if (addr >= node->start_addr && addr < node->start_addr + node->length) {
-            pthread_mutex_unlock(&(params->pmu_params->vma_list_mutex));
+            pthread_mutex_unlock(&(pmu_params->vma_list_mutex));
             return node;
         }
     }
-    pthread_mutex_unlock(&(params->pmu_params->vma_list_mutex));
+    pthread_mutex_unlock(&(pmu_params->vma_list_mutex));
     return NULL;
 }
 
-static struct page_refs *get_page_refs_form_list(const struct task_pid *tpid, uint64_t addr)
+static struct page_refs *get_page_refs_form_list(struct pmu_params *pmu_params, uint64_t addr)
 {
     struct vma_info *node;
     struct page_refs *page;
     unsigned index;
     int i;
-    node = get_vma_info(tpid, addr);
+    node = get_vma_info(pmu_params, addr);
     if (node == NULL) {
         return NULL;
     }
@@ -158,16 +156,15 @@ static void free_vma_list(struct vma_info *vma_list, struct vma_info *node)
     }
 }
 
-static int update_vmas_new(const struct task_pid *tpid, struct vmas *vmas)
+static int update_vmas_new(struct pmu_params *pmu_params, struct vmas *vmas)
 {
     struct vma *tmp_vma = vmas->vma_list;
-    struct slide_params *params = tpid->tk->params;
 
     while (tmp_vma != NULL) {
         struct vma_info *node = (struct vma_info *)calloc(1, sizeof(struct vma_info));
         if (node == NULL) {
             etmemd_log(ETMEMD_LOG_ERR, "malloc for vma_info fail\n");
-            free_vma_list(params->pmu_params->vma_list, node);
+            free_vma_list(pmu_params->vma_list, node);
             return -1;
         }
 
@@ -176,15 +173,15 @@ static int update_vmas_new(const struct task_pid *tpid, struct vmas *vmas)
         node->pages = (struct page_refs **)calloc(node->length / PAGE_SIZE, sizeof(struct page_refs *));
         if (node->pages == NULL) {
             etmemd_log(ETMEMD_LOG_ERR, "malloc for vma_info pages fail\n");
-            free_vma_list(params->pmu_params->vma_list, node);
+            free_vma_list(pmu_params->vma_list, node);
             return -1;
         }
 
         pthread_mutex_init(&(node->node_mutex), NULL);
-        pthread_mutex_lock(&(params->pmu_params->vma_list_mutex));
-        node->next = params->pmu_params->vma_list;
-        params->pmu_params->vma_list = node;
-        pthread_mutex_unlock(&(params->pmu_params->vma_list_mutex));
+        pthread_mutex_lock(&(pmu_params->vma_list_mutex));
+        node->next = pmu_params->vma_list;
+        pmu_params->vma_list = node;
+        pthread_mutex_unlock(&(pmu_params->vma_list_mutex));
         tmp_vma = tmp_vma->next;
     }
     return 0;
@@ -217,13 +214,13 @@ static struct page_refs *update_page_refs_in_vma_new(struct page_refs *page_refs
     return pf;
 }
 
-static void update_page_refs(const struct task_pid *tpid, struct page_refs *page_refs)
+static void update_page_refs(struct pmu_params *pmu_params, struct page_refs *page_refs)
 {
     struct page_refs *tmp_page_refs = page_refs;
     struct vma_info *vma_info = NULL;
 
     while (tmp_page_refs != NULL) {
-        vma_info = get_vma_info(tpid, tmp_page_refs->addr);
+        vma_info = get_vma_info(pmu_params, tmp_page_refs->addr);
         if (vma_info == NULL) {
             tmp_page_refs = tmp_page_refs->next;
             continue;
@@ -232,13 +229,12 @@ static void update_page_refs(const struct task_pid *tpid, struct page_refs *page
     }
 }
 
-static void clear_old_vmas(const struct task_pid *tpid)
+static void clear_old_vmas(struct pmu_params *pmu_params)
 {
-    struct slide_params *params = tpid->tk->params;
-    struct vma_info *node = params->pmu_params->vma_list;
+    struct vma_info *node = pmu_params->vma_list;
     struct vma_info *tmp_node = NULL;
 
-    pthread_mutex_lock(&(params->pmu_params->vma_list_mutex));
+    pthread_mutex_lock(&(pmu_params->vma_list_mutex));
     while (node != NULL) {
         tmp_node = node;
         node = node->next;
@@ -249,24 +245,24 @@ static void clear_old_vmas(const struct task_pid *tpid)
         free(tmp_node);
         tmp_node = NULL;
     }
-    pthread_mutex_unlock(&(params->pmu_params->vma_list_mutex));
-    params->pmu_params->vma_list = NULL;
+    pthread_mutex_unlock(&(pmu_params->vma_list_mutex));
+    pmu_params->vma_list = NULL;
 }
 
 /* Retrieve page reference data from the process's virtual memory addresses.
  * Merge the retrieved data into the index. */
-static int update_page_refs_from_vma(const struct task_pid *tpid,
+static int update_page_refs_from_vma(struct pmu_params *pmu_params,
                                      struct page_refs **page_refs, bool flag)
 {
     struct page_refs *tmp_pf = NULL;
     struct vmas *vmas = NULL;
     struct ioctl_para ioctl_para = {0};
     uint64_t ret;
-    struct slide_params *params = tpid->tk->params;
+    int sampled_pid = pmu_params->pid;
     char pid[PID_STR_MAX_LEN] = {0};
 
-    if (snprintf_s(pid, PID_STR_MAX_LEN, PID_STR_MAX_LEN - 1, "%u", tpid->pid) <= 0) {
-        etmemd_log(ETMEMD_LOG_ERR, "snprintf pid fail %u", tpid->pid);
+    if (snprintf_s(pid, PID_STR_MAX_LEN, PID_STR_MAX_LEN - 1, "%u", sampled_pid) <= 0) {
+        etmemd_log(ETMEMD_LOG_ERR, "snprintf pid fail %u", sampled_pid);
         return -1;
     }
 
@@ -277,7 +273,7 @@ static int update_page_refs_from_vma(const struct task_pid *tpid,
     }
 
     ioctl_para.ioctl_cmd = VMA_SCAN_ADD_FLAGS;
-    if (tpid->tk->swap_flag != 0) {
+    if (pmu_params->swap_flag != 0) {
         ioctl_para.ioctl_parameter = VMA_SCAN_FLAG;
     }
 
@@ -289,33 +285,33 @@ static int update_page_refs_from_vma(const struct task_pid *tpid,
     }
 
     if (flag) {
-        clear_old_vmas(tpid);
-        pthread_mutex_lock(&(params->pmu_params->vma_list_mutex));
+        clear_old_vmas(pmu_params);
+        pthread_mutex_lock(&(pmu_params->vma_list_mutex));
         clean_page_refs_unexpected(page_refs);
-        pthread_mutex_unlock(&(params->pmu_params->vma_list_mutex));
+        pthread_mutex_unlock(&(pmu_params->vma_list_mutex));
     }
 
-    ret = update_vmas_new(tpid, vmas);
+    ret = update_vmas_new(pmu_params, vmas);
     if (ret != 0) {
         etmemd_log(ETMEMD_LOG_ERR, "update_vmas for %s fail\n", pid);
         free_vmas(vmas);
         return ret;
     }
 
-    update_page_refs(tpid, tmp_pf);
+    update_page_refs(pmu_params, tmp_pf);
     (*page_refs) = tmp_pf;
 
     free_vmas(vmas);
     return 0;
 }
 
-static void clear_vma_info_list(struct slide_params *params)
+static void clear_vma_info_list(struct pmu_params *pmu_params)
 {
     struct vma_info *current = NULL;
     struct vma_info *tmp = NULL;
 
-    pthread_mutex_lock(&(params->pmu_params->vma_list_mutex));
-    current = params->pmu_params->vma_list;
+    pthread_mutex_lock(&(pmu_params->vma_list_mutex));
+    current = pmu_params->vma_list;
     while (current != NULL) {
         tmp = current;
         current = current->next;
@@ -329,9 +325,9 @@ static void clear_vma_info_list(struct slide_params *params)
         free(tmp);
         tmp = NULL;
     }
-    params->pmu_params->vma_list = NULL;
-    pthread_mutex_unlock(&(params->pmu_params->vma_list_mutex));
-    pthread_mutex_destroy(&(params->pmu_params->vma_list_mutex));
+    pmu_params->vma_list = NULL;
+    pthread_mutex_unlock(&(pmu_params->vma_list_mutex));
+    pthread_mutex_destroy(&(pmu_params->vma_list_mutex));
 }
 
 static unsigned long perf_process_event_code(const char **events)
@@ -612,7 +608,7 @@ static void *get_event_addr(struct perf_cpu_monitor *cpu_monitor)
     return (void*)address;
 }
 
-static void parse_sample_record(const struct task_pid *tk_pid, struct perf_cpu_monitor *cpu_monitor)
+static void parse_sample_record(struct pmu_params *pmu_params, struct perf_cpu_monitor *cpu_monitor)
 {
     void *address = NULL;
     struct page_refs *page = NULL;
@@ -622,7 +618,7 @@ static void parse_sample_record(const struct task_pid *tk_pid, struct perf_cpu_m
 
     address = get_event_addr(cpu_monitor);
     if (address != NULL) {
-        page = get_page_refs_form_list(tk_pid, (uint64_t)address);
+        page = get_page_refs_form_list(pmu_params, (uint64_t)address);
         if (page == NULL) {
             return;
         } else {
@@ -643,19 +639,18 @@ static void *pmu_sample_thread(void *arg)
     int cpu_set_size = thread_args->cpu_set_size;
     int cpu_set_index = thread_args->cpu_set_index;
     int start_monitor_index = cpu_set_index * cpu_set_size;
-    struct task_pid *tpid = thread_args->tpid;
-    struct slide_params *params = tpid->tk->params;
+    struct pmu_params *pmu_params = thread_args->pmu_params;
     int i;
     int j;
 
-    params->pmu_params->threads_meta_set[cpu_set_index].status = SAMPLE_THREAD_RUNNING;
+    pmu_params->threads_meta_set[cpu_set_index].status = SAMPLE_THREAD_RUNNING;
     while (1) {
-        if (params->pmu_params->threads_meta_set[cpu_set_index].status == SAMPLE_THREAD_STOP) {
+        if (pmu_params->threads_meta_set[cpu_set_index].status == SAMPLE_THREAD_STOP) {
             break;
         }
         for (i = 0; i < EVENT_NUM; i++) {
             for (j = 0; j < cpu_set_size; j++) {
-                parse_sample_record(tpid, &cpu_monitors_set[i][start_monitor_index + j]);
+                parse_sample_record(pmu_params, &cpu_monitors_set[i][start_monitor_index + j]);
             }
         }
     }
@@ -667,27 +662,26 @@ static void *pmu_sample_thread(void *arg)
     return NULL;
 }
 
-static void pmu_threads_out(struct slide_params *params, int cpu_set_count)
+static void pmu_threads_out(struct pmu_params *pmu_params, int cpu_set_count)
 {
     int i;
     for (i = cpu_set_count - 1; i >= 0; i--) {
-        if (params->pmu_params->threads_meta_set[i].tid == NULL) {
+        if (pmu_params->threads_meta_set[i].tid == NULL) {
             continue;
         }
-        params->pmu_params->threads_meta_set[i].status = SAMPLE_THREAD_STOP;
-        pthread_join(*(params->pmu_params->threads_meta_set[i].tid), NULL);
-        free(params->pmu_params->threads_meta_set[i].tid);
-        params->pmu_params->threads_meta_set[i].tid = NULL;
+        pmu_params->threads_meta_set[i].status = SAMPLE_THREAD_STOP;
+        pthread_join(*(pmu_params->threads_meta_set[i].tid), NULL);
+        free(pmu_params->threads_meta_set[i].tid);
+        pmu_params->threads_meta_set[i].tid = NULL;
     }
 }
 
-static int etmemd_start_sample_thread(struct task_pid *tk_pid, int cpu_set_count, int cpu_set_size,
+static int etmemd_start_sample_thread(struct pmu_params *pmu_params, int cpu_set_count, int cpu_set_size,
                                       struct perf_cpu_monitor **perf_cpu_monitors)
 {
     int i;
     int ret;
     struct sample_thread_args *thread_args = NULL;
-    struct slide_params *params = tk_pid->tk->params;
 
     thread_args = (struct sample_thread_args *)calloc(cpu_set_count, sizeof(struct sample_thread_args));
     if (thread_args == NULL) {
@@ -699,26 +693,26 @@ static int etmemd_start_sample_thread(struct task_pid *tk_pid, int cpu_set_count
         thread_args[i].cpu_set_size = cpu_set_size;
         thread_args[i].cpu_set_index = i;
         thread_args[i].perf_cpu_monitors = perf_cpu_monitors;
-        thread_args[i].tpid = tk_pid;
+        thread_args[i].pmu_params = pmu_params;
 
-        params->pmu_params->threads_meta_set[i].tid = (pthread_t *)calloc(1, sizeof(pthread_t));
-        if (params->pmu_params->threads_meta_set[i].tid == NULL) {
+        pmu_params->threads_meta_set[i].tid = (pthread_t *)calloc(1, sizeof(pthread_t));
+        if (pmu_params->threads_meta_set[i].tid == NULL) {
             etmemd_log(ETMEMD_LOG_ERR, "malloc for g_threads_meta_set[%d].tid fail\n", i);
             goto start_thread_out;
         }
 
-        ret = pthread_create(params->pmu_params->threads_meta_set[i].tid, NULL, pmu_sample_thread, &thread_args[i]);
+        ret = pthread_create(pmu_params->threads_meta_set[i].tid, NULL, pmu_sample_thread, &thread_args[i]);
         if (ret != 0) {
             etmemd_log(ETMEMD_LOG_ERR, "start sample thread for cpu %d - %d fail", \
                 i * cpu_set_size, (i + 1) * cpu_set_size - 1);
-            free(params->pmu_params->threads_meta_set[i].tid);
+            free(pmu_params->threads_meta_set[i].tid);
             goto start_thread_out;
         }
     }
     return 0;
 
 start_thread_out:
-    pmu_threads_out(params, cpu_set_count);
+    pmu_threads_out(pmu_params, cpu_set_count);
 
     return -1;
 }
@@ -726,14 +720,14 @@ start_thread_out:
 /* This function starts the sample thread to monitor specified performance events on designated CPU cores.
  * It initializes performance monitoring parameters, allocates memory for thread metadata,
  * and sets up the process address space for monitoring. */
-static int etmemd_start_sample_threads(struct task_pid *tk_pid)
+static int etmemd_start_sample_threads(struct pmu_params *pmu_params)
 {
-    struct slide_params *params = tk_pid->tk->params;
     struct perf_cpu_monitor **perf_cpu_monitors = NULL;
     uint64_t *events_code;
-    int cpu_set_size = params->pmu_params->cpu_set_size;
+    int cpu_set_size = pmu_params->cpu_set_size;
     int cpu_set_count = SYS_CORES / cpu_set_size;
     int ret;
+    int pid = pmu_params->pid;
 
     events_code = (uint64_t *)calloc(EVENT_NUM, sizeof(uint64_t));
     if (events_code == NULL) {
@@ -747,27 +741,27 @@ static int etmemd_start_sample_threads(struct task_pid *tk_pid)
         goto event_out;
     }
 
-    params->pmu_params->threads_meta_set = (struct sample_thread_meta *)calloc(cpu_set_count,
+    pmu_params->threads_meta_set = (struct sample_thread_meta *)calloc(cpu_set_count,
         sizeof(struct sample_thread_meta));
-    if (params->pmu_params->threads_meta_set == NULL) {
+    if (pmu_params->threads_meta_set == NULL) {
         etmemd_log(ETMEMD_LOG_ERR, "malloc for g_threads_meta_set fail\n");
         ret = -1;
         goto event_out;
     }
 
-    ret = update_page_refs_from_vma(tk_pid, &(params->pmu_params->page_refs_head), false);
+    ret = update_page_refs_from_vma(pmu_params, &(pmu_params->page_refs_head), false);
     if (ret != 0) {
         goto init_vma_out;
     }
 
-    perf_cpu_monitors = init_perf_cpu_monitors(params->pmu_params->sample_period,
-                                               events_code, (int)tk_pid->pid);
+    perf_cpu_monitors = init_perf_cpu_monitors(pmu_params->sample_period,
+                                               events_code, pid);
     if (perf_cpu_monitors == NULL) {
         etmemd_log(ETMEMD_LOG_ERR, "init_perf_cpu_monitors fail\n");
         goto init_monitor_out;
     }
 
-    ret = etmemd_start_sample_thread(tk_pid, cpu_set_count, cpu_set_size, perf_cpu_monitors);
+    ret = etmemd_start_sample_thread(pmu_params, cpu_set_count, cpu_set_size, perf_cpu_monitors);
     if (ret != 0) {
         goto thread_out;
     }
@@ -777,11 +771,11 @@ thread_out:
     clear_perf_cpu_monitors(perf_cpu_monitors);
 
 init_monitor_out:
-    clear_vma_info_list(params);
+    clear_vma_info_list(pmu_params);
 
 init_vma_out:
-    free(params->pmu_params->threads_meta_set);
-    params->pmu_params->threads_meta_set = NULL;
+    free(pmu_params->threads_meta_set);
+    pmu_params->threads_meta_set = NULL;
 
 event_out:
     free(events_code);
@@ -796,13 +790,12 @@ static inline void reset_page_refs_count(struct page_refs **page_refs)
     }
 }
 
-void merge_page_refs(struct task_pid *tpid, struct page_sort **page_sort, struct memory_grade **memory_grade)
+void merge_page_refs(struct pmu_params *pmu_params, struct page_sort **page_sort, struct memory_grade **memory_grade)
 {
     int i;
     int loop = 0;
     struct page_refs *page_refs_start = NULL;
     struct page_refs *page_refs_end = NULL;
-    struct slide_params *params = tpid->tk->params;
 
     if (page_sort == NULL || memory_grade == NULL || *page_sort == NULL || *memory_grade == NULL) {
         return;
@@ -848,55 +841,49 @@ void merge_page_refs(struct task_pid *tpid, struct page_sort **page_sort, struct
     (*memory_grade)->cold_pages = NULL;
     (*memory_grade)->hot_pages = NULL;
     page_refs_end->count = 0;
-    params->pmu_params->page_refs_head = page_refs_start;
+    pmu_params->page_refs_head = page_refs_start;
 }
 
-void etmemd_stop_sample(struct task *tk)
+void etmemd_stop_sample(struct pmu_params *pmu_params)
 {
-    struct slide_params *params = (struct slide_params*)tk->params;
-    int cpu_set_size = params->pmu_params->cpu_set_size;
+    int cpu_set_size = pmu_params->cpu_set_size;
     int cpu_set_count = cpu_set_count = SYS_CORES / cpu_set_size;
 
-    pmu_threads_out(params, cpu_set_count);
-    free(params->pmu_params->threads_meta_set);
-    params->pmu_params->threads_meta_set = NULL;
+    pmu_threads_out(pmu_params, cpu_set_count);
+    free(pmu_params->threads_meta_set);
+    pmu_params->threads_meta_set = NULL;
 
-    clear_vma_info_list(params);
-    params->pmu_params->vma_updata_count = 0;
-    params->pmu_params->page_refs_head = NULL;
+    clear_vma_info_list(pmu_params);
+    pmu_params->vma_updata_count = 0;
+    pmu_params->page_refs_head = NULL;
 }
 
-struct page_refs *etmemd_do_sample(struct task_pid *tpid, const struct task *tk)
+struct page_refs *etmemd_do_sample(struct pmu_params *pmu_params)
 {
-    struct slide_params *params = tpid->tk->params;
-    struct page_scan *page_scan = (struct page_scan *)(tpid->tk)->eng->proj->scan_param;
-    int loop = page_scan->loop;
-    int sleep_t = page_scan->sleep;
     int ret;
 
-    if (tk == NULL) {
-        etmemd_log(ETMEMD_LOG_ERR, "task struct is null for pid %u\n", tpid->pid);
+    if (pmu_params == NULL) {
+        etmemd_log(ETMEMD_LOG_ERR, "pmu_params struct is null for pid %u\n", pmu_params->pid);
         return NULL;
     }
 
-    if (params->pmu_params->threads_meta_set == NULL) {
-        ret = etmemd_start_sample_threads(tpid);
+    if (pmu_params->threads_meta_set == NULL) {
+        ret = etmemd_start_sample_threads(pmu_params);
         if (ret != 0) {
             etmemd_log(ETMEMD_LOG_ERR, "start sample thread failed.");
             return NULL;
         }
     }
 
-    params->pmu_params->vma_updata_count = (params->pmu_params->vma_updata_count + 1) % \
-                                             (params->pmu_params->vma_updata_rate);
-    if (params->pmu_params->vma_updata_count == 0) {
-        ret = update_page_refs_from_vma(tpid, &(params->pmu_params->page_refs_head), true);
+    pmu_params->vma_updata_count = (pmu_params->vma_updata_count + 1) % \
+                                             (pmu_params->vma_updata_rate);
+    if (pmu_params->vma_updata_count == 0) {
+        ret = update_page_refs_from_vma(pmu_params, &(pmu_params->page_refs_head), true);
         if (ret != 0) {
             return NULL;
         }
     }
 
-    sleep(loop * sleep_t);
-    return params->pmu_params->page_refs_head;
+    return pmu_params->page_refs_head;
 }
 #endif

@@ -13,6 +13,10 @@ node_pair=0,2;1,3
 hot_threshold=1
 node_mig_quota=1024
 node_hot_reserve=1024
+sample_period=5000
+vma_updata_rate=3
+cpu_set_size=12
+cooling_interval=100000
 
 [task]
 project=test
