@@ -15,6 +15,9 @@ etmem内存分级扩展技术，通过DRAM+内存压缩/高性能存储新介质
 2. 编译和运行依赖
 
     etmem的编译和运行依赖于libboundscheck组件
+    ```
+    yum install libboundscheck
+    ```
 
 3. 编译
 
@@ -79,7 +82,7 @@ options：
 
 | 参数            | 参数含义                           | 是否必须 | 是否有参数 | 参数范围              | 示例说明                                                     |
 | --------------- | ---------------------------------- | -------- | ---------- | --------------------- | ------------------------------------------------------------ |
-| -l或\-\-log-level | etmemd日志级别                     | 否       | 是         | 0~3                   | 0：debug级别   1：info级别   2：warning级别   3：error级别   只有大于等于配置的级别才会打印到/var/log/message文件中 |
+| -l或\-\-log-level | etmemd日志级别                     | 否       | 是         | 0~3                   | 0：debug级别   1：info级别   2：warning级别   3：error级别   只有大于等于配置的级别才会打印到/var/log/messages文件中 |
 | -s或\-\-socket    | etmemd监听的名称，用于与客户端交互 | 是       | 是         | 107个字符之内的字符串 | 指定服务端监听的名称                                         |
 | -h或\-\-help      | 帮助信息                           | 否       | 否         | NA                    | 执行时带有此参数会打印后退出                                 |
 | -m或\-\-mode-systemctl|	etmemd作为service被拉起时，命令中可以使用此参数来支持fork模式启动|	否|	否|	NA|	NA|
@@ -335,7 +338,7 @@ options:
 #### 命令行参数说明
 | 参数             | 参数含义       | 是否必须 | 是否有参数 | 参数范围 | 实例说明      |
 |----------------|------------|------|-------|------|-----------|
-| -l或\-\-log-level | etmemd日志级别 | 否    | 是     | 0~3  | 0：debug级别；1：info级别；2：warning级别；3：error级别；只有大于等于配置的级别才会打印到/var/log/message文件中|
+| -l或\-\-log-level | etmemd日志级别 | 否    | 是     | 0~3  | 0：debug级别；1：info级别；2：warning级别；3：error级别；只有大于等于配置的级别才会打印到/var/log/messages文件中|
 | -s或\-\-socket |etmemd监听的名称，用于与客户端交互 |	是	| 是|	107个字符之内的字符串|	指定服务端监听的名称|
 |-m或\-\-mode-systemctl	| etmemd作为service被拉起时，命令中需要指定此参数来支持 |	否 |	否 |	NA |	NA |
 | -h或\-\-help |	帮助信息 |	否	 |否	|NA	|执行时带有此参数会打印后退出|
@@ -634,7 +637,7 @@ etmem obj del -f /etc/etmem/psi_task.yaml  -s etmemd_socket
 ```shell
 etmem project start -n test -s etmemd_socket
 ```
-工程启动后，etmem相关调试日志会存储到/var/log/message中，每一轮的回收信息会以 **DEBUG**等级打印到/var/log/message中，可以通过调整日志等级后查看。
+工程启动后，etmem相关调试日志会存储到/var/log/messages中，每一轮的回收信息会以 **DEBUG**等级打印到/var/log/messages中，可以通过调整日志等级后查看。
 
 5、停止工程
 运行结束后，可通过etmem project 命令停止工程。
@@ -670,6 +673,14 @@ sample_period=5000
 vma_updata_rate=5
 cpu_set_size=16
 ```
+若使用cslide引擎,则在etmem/conf/cslide_conf.yaml[engine]添加下面三个配置参数，同时cslide引擎支持设置数据冷处理间隔cooling_interval.
+```shell
+[engine]
+sample_period=5000  
+vma_updata_rate=5
+cpu_set_size=16
+cooling_interval=100000
+```
 
 **配置参数含义与解释如下：**
 配置文件各字段说明：
@@ -679,6 +690,7 @@ cpu_set_size=16
 | sample_period |利用pmu采样内存访问事件的周期     | 使用硬件访存事件时必须设置                 | 是 | [1000,10000]推荐参数范围     | sample_period=5000//表示5000条指令触发一次内存访问事件采样|
 | vma_updata_rate | vmas update 频率 | 使用硬件访存事件时必须设置               | 是 | [0,50]推荐参数范围     | vma_updata_rate=5//表示在5*loop*sleep时间做一次vma update |
 | cpu_set_size |多少个核用一个线程进行采样 | 使用硬件访存事件时必须设置               | 是 | lscpu 显示的cpu核数的因数，0除外  | cpu_set_size=16//首先我们设定一个核有一个buffer，cpu_set_size=16表示一个线程采样16个buffer里面的访存事件信息, 那么如果64核对应的就有64/16=4个线程进行采样  |
+| cooling_interval |多少次采样后做一次数据冷处理 | 使用硬件访存事件时必须设置               | 是 | [10000,1000000]推荐参数范围  | cooling_interval=100000 // 采样循环100000次将采样数据指数平滑移动一次。  |
 
 ## 参与贡献
 

@@ -18,19 +18,7 @@
 
 #include "etmemd_pool_adapter.h"
 #include "etmemd_engine.h"
-
-#ifdef ENABLE_PMU
-struct pmu_params {
-    uint64_t sample_period;  /* Sampling mem access events every N instructions */
-    uint32_t vma_updata_rate;  /* Update after every N slide migrations */
-    uint32_t cpu_set_size;    /* Number of CPU cores sampled by one thread */
-    struct vma_info *vma_list;  /* Pointer to a linked list of VMA (Virtual Memory Area) information */
-    struct page_refs *page_refs_head;  /* Pointer to the head of the page_refs linked list */
-    struct sample_thread_meta *threads_meta_set;  /* Pointer to a set of sampled thread metadata */
-    int vma_updata_count;  /* Counter for VMA update operations */
-    pthread_mutex_t vma_list_mutex;  /* Mutex for protecting access to the VMA list */
-};
-#endif
+#include "etmemd_scan.h"
 
 struct slide_params {
     struct task_executor *executor;

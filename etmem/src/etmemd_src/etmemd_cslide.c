@@ -125,6 +125,9 @@ struct cslide_pid_params {
     struct cslide_eng_params *eng_params;
     struct cslide_task_params *task_params;
     struct cslide_pid_params *next;
+#ifdef ENABLE_PMU
+    struct pmu_params *pmu_params;      /* pmu sample params */
+#endif
 };
 
 struct cslide_params_factory {
@@ -151,6 +154,11 @@ struct cslide_eng_params {
     struct cslide_params_factory factory;
     struct node_pages_info *host_pages_info;
     bool finish;
+#ifdef ENABLE_PMU
+    struct pmu_params *pmu_params;
+    int cooling_interval;
+    int cooling_interval_init;
+#endif
 };
 
 struct ctrl_cap {
@@ -1355,6 +1363,93 @@ static int cslide_do_scan(struct cslide_eng_params *eng_params)
     return 0;
 }
 
+#ifdef ENABLE_PMU
+static int cslide_do_sample(struct cslide_eng_params *eng_params)
+{
+    struct cslide_pid_params *each_pid_params = NULL;
+    int ret;
+
+    factory_foreach_working_pid_params(each_pid_params, &eng_params->factory) {
+        if (cslide_get_vmas(each_pid_params) != 0) {
+            etmemd_log(ETMEMD_LOG_ERR, "cslide get vmas fail\n");
+            return -1;
+        }
+    }
+
+    etmemd_log(ETMEMD_LOG_DEBUG, "cslide pmu : read pmu_params to sample");
+    factory_foreach_working_pid_params(each_pid_params, &eng_params->factory) {
+        if (each_pid_params->pmu_params == NULL) {
+            each_pid_params->pmu_params = calloc(1, sizeof(struct pmu_params));
+            if (each_pid_params->pmu_params == NULL) {
+                etmemd_log(ETMEMD_LOG_ERR, "Memory allocation for pmu_params failed.\n");
+                return -1;
+            }
+        }
+
+        each_pid_params->pmu_params = eng_params->pmu_params;
+        each_pid_params->pmu_params->pid = each_pid_params->pid;
+        
+        ret = pthread_mutex_init(&(each_pid_params->pmu_params->vma_list_mutex), NULL);
+        if (ret != 0) {
+            etmemd_log(ETMEMD_LOG_ERR, "init vma_list_mutex failed.\n");
+            return -1;
+        }
+
+        etmemd_do_sample(each_pid_params->pmu_params);
+    }
+
+    return 0;
+}
+
+/**
+ * cooling - Perform cooling by updating page reference counts
+ *
+ * This function updates the page reference counts by aggregating
+ * data from multiple `count_page_refs` entries. The aggregation
+ * is performed by directly dividing the index by a smoothing factor
+ * (in this case, 2) to achieve a form of averaging.
+ */
+static void cooling(struct cslide_pid_params *pid_params)
+{
+    struct count_page_refs *cpfs = pid_params->count_page_refs;
+    int count = pid_params->count;
+    /* 2 is used for calculating the exponential moving average of access frequency */
+    int smoothing = 2;
+
+    for (int c = 1; c < count; c++) {
+        struct count_page_refs *src_cpf = &cpfs[c];
+        struct count_page_refs *dest_cpf = &cpfs[c / smoothing];
+
+        for (int n = 0; n < src_cpf->node_num; n++) {
+            struct node_page_refs *src_node = &src_cpf->node_pfs[n];
+            struct node_page_refs *dest_node = &dest_cpf->node_pfs[n];
+
+            if (src_node->head == NULL) {
+                continue;
+            }
+
+            if (dest_node->tail) {
+                dest_node->tail->next = src_node->head;
+            } else {
+                dest_node->head = src_node->head;
+            }
+            dest_node->tail = src_node->tail;
+            dest_node->num += src_node->num;
+
+            struct page_refs *current = src_node->head;
+            while (current) {
+                current->count = c / smoothing;
+                current = current->next;
+            }
+
+            src_node->head = NULL;
+            src_node->tail = NULL;
+            src_node->num = 0;
+        }
+    }
+}
+#endif
+
 // error return -1; success return moved pages number
 static int do_migrate_pages(unsigned int pid, struct page_refs *page_refs, int node)
 {
@@ -1508,6 +1603,13 @@ static void update_pages_info(struct cslide_eng_params *eng_params, struct cslid
         host_pages[n].cold += task_pages[n].cold;
         host_pages[n].hot += task_pages[n].hot;
     }
+#ifdef ENABLE_PMU
+    eng_params->cooling_interval -= pid_params->pmu_params->vma_updata_count;
+    if (eng_params->cooling_interval < 0) {
+        cooling(pid_params);
+        eng_params->cooling_interval = eng_params->cooling_interval_init;
+    }
+#endif
 }
 
 static void cslide_stat(struct cslide_eng_params *eng_params)
@@ -1558,6 +1660,10 @@ static void destroy_cslide_eng_params(struct cslide_eng_params *params)
 {
     free(params->host_pages_info);
     params->host_pages_info = NULL;
+#ifdef ENABLE_PMU
+    free(params->pmu_params);
+    params->pmu_params = NULL;
+#endif
     destroy_factory(&params->factory);
     pthread_mutex_destroy(&params->stat_mtx);
     destroy_node_map(&params->node_map);
@@ -1611,10 +1717,46 @@ destroy_sys_mem:
     return -1;
 }
 
+static void cleanup_and_destroy(struct cslide_eng_params *eng_params)
+{
+    factory_update_pid_params(&eng_params->factory);
+    destroy_cslide_eng_params(eng_params);
+    free(eng_params);
+}
+
+static int perform_memory_operations(struct cslide_eng_params *eng_params)
+{
+#ifdef ENABLE_PMU
+    if (eng_params->pmu_params->sample_period == 0) {
+        struct sys_mem *mem = NULL;
+        mem = &eng_params->mem;
+        if (get_sys_mem(mem) != 0) {
+            return -1;
+        }
+        if (cslide_do_scan(eng_params) != 0) {
+            return -1;
+        }
+    } else if (cslide_do_sample(eng_params) != 0) {
+        return -1;
+    }
+#else
+    struct sys_mem *mem = NULL;
+    mem = &eng_params->mem;
+    if (get_sys_mem(mem) != 0) {
+        etmemd_log(ETMEMD_LOG_ERR, "get system meminfo fail\n");
+        return -1;
+    }
+    if (cslide_do_scan(eng_params) != 0) {
+        etmemd_log(ETMEMD_LOG_ERR, "cslide_do_scan fail\n");
+        return -1;
+    }
+#endif
+    return 0;
+}
+
 static void *cslide_main(void *arg)
 {
     struct cslide_eng_params *eng_params = (struct cslide_eng_params *)arg;
-    struct sys_mem *mem = NULL;
 
     // only invalid pthread id or deatch more than once will cause error
     // so no need to check return value of pthread_detach
@@ -1630,14 +1772,7 @@ static void *cslide_main(void *arg)
             goto next;
         }
 
-        mem = &eng_params->mem;
-        if (get_sys_mem(mem) != 0) {
-            etmemd_log(ETMEMD_LOG_ERR, "get system meminfo fail\n");
-            goto next;
-        }
-
-        if (cslide_do_scan(eng_params) != 0) {
-            etmemd_log(ETMEMD_LOG_ERR, "cslide_do_scan fail\n");
+        if (perform_memory_operations(eng_params) != 0) {
             goto next;
         }
 
@@ -1656,9 +1791,7 @@ next:
         cslide_clean_params(eng_params);
     }
 
-    factory_update_pid_params(&eng_params->factory);
-    destroy_cslide_eng_params(eng_params);
-    free(eng_params);
+    cleanup_and_destroy(eng_params);
     return NULL;
 }
 
@@ -2065,11 +2198,110 @@ static int fill_mig_quota(void *obj, void *val)
     return 0;
 }
 
+#ifdef ENABLE_PMU
+static int init_pmu_params(struct cslide_eng_params *params)
+{
+    if (params->pmu_params == NULL) {
+        params->pmu_params = calloc(1, sizeof(struct pmu_params));
+        if (params->pmu_params == NULL) {
+            etmemd_log(ETMEMD_LOG_ERR, "Memory allocation for pmu_params failed.\n");
+            return -1;
+        }
+    }
+    return 0;
+}
+
+static int fill_vma_updata_rate(void *obj, void *val)
+{
+    if (params->pmu_params == NULL) {
+        params->pmu_params = calloc(1, sizeof(struct pmu_params));
+        if (params->pmu_params == NULL) {
+            etmemd_log(ETMEMD_LOG_ERR, "Memory allocation for pmu_params failed.\n");
+            return -1;
+        }
+    }
+    return 0;
+}
+
+static int fill_vma_updata_rate(void *obj, void *val)
+{
+    struct cslide_eng_params *params = (struct cslide_eng_params *)obj;
+    int value = parse_to_int(val);
+    if (value < 0) {
+        etmemd_log(ETMEMD_LOG_ERR, "config vma_updata_rate %d not valid\n", value);
+        return -1;
+    }
+    if (init_pmu_params(params) < 0) {
+        return -1;
+    }
+
+    params->pmu_params->vma_updata_rate = value;
+    params->pmu_params->vma_updata_count = 0;
+    return 0;
+}
+
+static int fill_sample_period(void *obj, void *val)
+{
+    struct cslide_eng_params *params = (struct cslide_eng_params *)obj;
+    int value = parse_to_int(val);
+    if (value < 0) {
+        etmemd_log(ETMEMD_LOG_ERR, "config sample_period %d not valid\n", value);
+        return -1;
+    }
+    if (init_pmu_params(params) < 0) {
+        return -1;
+    }
+	
+    params->pmu_params->sample_period = value;
+    return 0;
+}
+
+static int fill_cpu_set_size(void *obj, void *val)
+{
+    struct cslide_eng_params *params = (struct cslide_eng_params *)obj;
+    int value = parse_to_int(val);
+    if (value < 0) {
+        etmemd_log(ETMEMD_LOG_ERR, "config cpu_set_size %d not valid\n", value);
+        return -1;
+    }
+    if (init_pmu_params(params) < 0) {
+        return -1;
+    }
+	
+    params->pmu_params->cpu_set_size = value;
+    params->pmu_params->swap_flag = 0;
+    return 0;
+}
+
+static int fill_cooling_interval(void *obj, void *val)
+{
+    struct cslide_eng_params *params = (struct cslide_eng_params *)obj;
+    int value = parse_to_int(val);
+    if (value < 0) {
+        etmemd_log(ETMEMD_LOG_ERR, "config cooling_interval %d not valid\n", value);
+        return -1;
+    }
+    if (init_pmu_params(params) < 0) {
+        return -1;
+    }
+	
+    params->cooling_interval = value;
+    params->cooling_interval_init = value;
+    return 0;
+}
+#endif
+
 static struct config_item cslide_eng_config_items[] = {
     {"node_pair", STR_VAL, fill_node_pair, false},
     {"hot_threshold", INT_VAL, fill_hot_threshold, false},
     {"node_mig_quota", INT_VAL, fill_mig_quota, false},
     {"node_hot_reserve", INT_VAL, fill_hot_reserve, false},
+#ifdef ENABLE_PMU
+    {"sample_period", INT_VAL, fill_sample_period, false},
+    {"vma_updata_rate", INT_VAL, fill_vma_updata_rate, false},
+    {"cpu_set_size", INT_VAL, fill_cpu_set_size, false},
+    {"cooling_interval", INT_VAL, fill_cooling_interval, false},
+#endif
 };
 
 static int cslide_fill_eng(GKeyFile *config, struct engine *eng)

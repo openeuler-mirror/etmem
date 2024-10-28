@@ -211,6 +211,7 @@ static void *slide_executor(void *arg)
     struct page_refs *page_refs = NULL;
     struct memory_grade *memory_grade = NULL;
     struct page_sort *page_sort = NULL;
+    struct task *task_ptr = (struct task *)tk_pid->tk;
 
     /* The pthread_setcancelstate interface returns an error only when the
      * input parameter state is invalid, no need to check return value.
@@ -225,13 +226,16 @@ static void *slide_executor(void *arg)
     }
 
 #ifdef ENABLE_PMU
-    if (((struct slide_params *)tk_pid->tk->params)->pmu_params == NULL) {
-        page_refs = etmemd_do_scan(tk_pid, tk_pid->tk);
+    struct slide_params *slide = (struct slide_params *)task_ptr->params;
+    if ((slide->pmu_params == NULL) {
+        page_refs = etmemd_do_scan(tk_pid, task_ptr);
     } else {
-        page_refs = etmemd_do_sample(tk_pid, tk_pid->tk);
+        slide->pmu_params->pid = tk_pid->pid;
+        slide->pmu_params->swap_flag = task_ptr->swap_flag;
+        page_refs = etmemd_do_sample(slide->pmu_params);
     }
 #else
-    page_refs = etmemd_do_scan(tk_pid, tk_pid->tk);
+    page_refs = etmemd_do_scan(tk_pid, task_ptr);
 #endif
     if (page_refs == NULL) {
         etmemd_log(ETMEMD_LOG_WARN, "pid %u cannot get page refs\n", tk_pid->pid);
@@ -268,8 +272,9 @@ scan_out:
 
 exit:
 #ifdef ENABLE_PMU
-    if (((struct slide_params *)tk_pid->tk->params)->pmu_params != NULL) {
-        merge_page_refs(tk_pid, &page_sort, &memory_grade);
+    if (((struct slide_params *)task_ptr->params)->pmu_params != NULL) {
+        merge_page_refs(((struct slide_params *)task_ptr->params)->pmu_params,
+            &page_sort, &memory_grade);
     }
 #endif
     clean_memory_grade_unexpected(&memory_grade);
@@ -483,7 +488,7 @@ static void slide_stop_task(struct engine *eng, struct task *tk)
 
 #ifdef ENABLE_PMU
     if (params->pmu_params != NULL) {
-        etmemd_stop_sample(tk);
+        etmemd_stop_sample(params->pmu_params);
     }
 #endif
 
