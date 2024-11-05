@@ -23,6 +23,9 @@ static int parse_item(GKeyFile *config, char *group_name, struct config_item *it
     double value;
 
     if (!g_key_file_has_key(config, group_name, item->key, NULL)) {
+        if (strcmp(item->key, "scan_type") == 0) {
+            return item->fill(obj, "page");
+        }
         if (item->option) {
             return 0;
         }

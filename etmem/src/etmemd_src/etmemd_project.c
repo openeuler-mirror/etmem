@@ -790,7 +790,7 @@ static bool check_swapcache_wmark_valid(struct project *proj)
 
 static struct config_item g_project_config_items[] = {
     {"name", STR_VAL, fill_project_name, false},
-    {"scan_type", STR_VAL, fill_project_scan_type, false},
+    {"scan_type", STR_VAL, fill_project_scan_type, true},
     {"sysmem_threshold", INT_VAL, fill_project_sysmem_threshold, true},
     {"swapcache_high_wmark", INT_VAL, fill_project_swapcache_high_wmark, true},
     {"swapcache_low_wmark", INT_VAL, fill_project_swapcache_low_wmark, true},
