@@ -16,8 +16,8 @@
 #ifndef ETMEM_THIRDPARTY_EXPORT_H
 #define ETMEM_THIRDPARTY_EXPORT_H
 
-#include "etmemd_project_exp.h"
 #include "etmemd_engine_exp.h"
+#include "etmemd_project_exp.h"
 #include "etmemd_task_exp.h"
 
 #endif
