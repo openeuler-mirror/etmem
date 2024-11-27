@@ -205,6 +205,28 @@ static int check_should_swap(struct task_pid *tk_pid)
     return check_pidmem_lower_threshold(tk_pid);
 }
 
+#ifdef ENABLE_PMU
+static struct page_refs *handle_page_refs(struct task_pid *tk_pid, struct task *task_ptr)
+{
+    struct slide_params *slide = (struct slide_params *)task_ptr->params;
+    struct page_refs *page_refs = NULL;
+    if (slide->pmu_params == NULL) {
+        page_refs = etmemd_do_scan(tk_pid, task_ptr);
+    } else {
+        slide->pmu_params->pid = tk_pid->pid;
+        slide->pmu_params->swap_flag = task_ptr->swap_flag;
+        page_refs = etmemd_do_sample(slide->pmu_params);
+    }
+    return page_refs;
+}
+#else
+static struct page_refs *handle_page_refs(struct task_pid *tk_pid, struct task *task_ptr)
+{
+    return etmemd_do_scan(tk_pid, task_ptr);
+}
+#endif
+
+
 static void *slide_executor(void *arg)
 {
     struct task_pid *tk_pid = (struct task_pid *)arg;
@@ -225,18 +247,7 @@ static void *slide_executor(void *arg)
         goto scan_out;
     }
 
-#ifdef ENABLE_PMU
-    struct slide_params *slide = (struct slide_params *)task_ptr->params;
-    if ((slide->pmu_params == NULL) {
-        page_refs = etmemd_do_scan(tk_pid, task_ptr);
-    } else {
-        slide->pmu_params->pid = tk_pid->pid;
-        slide->pmu_params->swap_flag = task_ptr->swap_flag;
-        page_refs = etmemd_do_sample(slide->pmu_params);
-    }
-#else
-    page_refs = etmemd_do_scan(tk_pid, task_ptr);
-#endif
+    page_refs = handle_page_refs(tk_pid, task_ptr);
     if (page_refs == NULL) {
         etmemd_log(ETMEMD_LOG_WARN, "pid %u cannot get page refs\n", tk_pid->pid);
         goto scan_out;

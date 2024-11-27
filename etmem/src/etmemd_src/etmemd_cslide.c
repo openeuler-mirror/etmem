@@ -2213,18 +2213,6 @@ static int init_pmu_params(struct cslide_eng_params *params)
 
 static int fill_vma_updata_rate(void *obj, void *val)
 {
-    if (params->pmu_params == NULL) {
-        params->pmu_params = calloc(1, sizeof(struct pmu_params));
-        if (params->pmu_params == NULL) {
-            etmemd_log(ETMEMD_LOG_ERR, "Memory allocation for pmu_params failed.\n");
-            return -1;
-        }
-    }
-    return 0;
-}
-
-static int fill_vma_updata_rate(void *obj, void *val)
-{
     struct cslide_eng_params *params = (struct cslide_eng_params *)obj;
     int value = parse_to_int(val);
     if (value < 0) {
