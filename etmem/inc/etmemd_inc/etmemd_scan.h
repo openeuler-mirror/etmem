@@ -77,7 +77,6 @@ struct walk_address {
 /* the caller need to judge value returned by etmemd_do_scan(), NULL means fail. */
 struct page_refs *etmemd_do_scan(const struct task_pid *tpid, const struct task *tk);
 
-#ifdef ENABLE_PMU
 struct pmu_params {
     uint64_t sample_period;         /* Sampling mem access events every N instructions */
     uint32_t vma_updata_rate;       /* Update after every N slide migrations */
@@ -90,6 +89,7 @@ struct pmu_params {
     unsigned int pid;
     int swap_flag;
 };
+#ifdef ENABLE_PMU
 #define BITS_IN_INT (sizeof(int) * CHAR_BIT) // get the number of bits in an int
 /* Assume the hardware events count following a power-law distribution */
 static inline int limit_count_to_loop(int count, int loop)
