@@ -692,6 +692,44 @@ cooling_interval=100000
 | cpu_set_size |多少个核用一个线程进行采样 | 使用硬件访存事件时必须设置               | 是 | lscpu 显示的cpu核数的因数，0除外  | cpu_set_size=16//首先我们设定一个核有一个buffer，cpu_set_size=16表示一个线程采样16个buffer里面的访存事件信息, 那么如果64核对应的就有64/16=4个线程进行采样  |
 | cooling_interval |多少次采样后做一次数据冷处理 | 使用硬件访存事件时必须设置               | 是 | [10000,1000000]推荐参数范围  | cooling_interval=100000 // 采样循环100000次将采样数据指数平滑移动一次。  |
 
+### etmem对DAMON系统的支持
+
+#### 编译
+当前版本的etmem支持DAMON系统DBGFS及SYSFS两套接口，默认配置将仅支持DBGFS接口。如需etmem支持SYSFS接口，请使用以下命令，
+
+`$ cmake -DDAMON_SYSFS_VERSION=y ..`
+
+#### 项目依赖
+etmem对DAMON系统的支持需要内核支持DAMON系统，在开始使用之前请先确认内核开启DAMON子系统，使用以下命令进行确认，
+
+```
+$ grep 'DAMON' /boot/config-$(uname -r)
+ONFIG_DAMON=y
+CONFIG_DAMON_VADDR=y
+CONFIG_DAMON_PADDR=y
+CONFIG_DAMON_SYSFS=y
+# CONFIG_DAMON_DBGFS is not set
+CONFIG_DAMON_RECLAIM=y
+CONFIG_DAMON_LRU_SORT=y
+```
+
+注意，上述系统默认启用了SYSFS接口，对于低版本的内核默认启用的是DBGFS，需要注意区分。
+
+#### 使用方法
+请参考etmem/conf/damon_conf.yaml, 在[engine]中设置以下配置参数，
+```shell
+[engine]
+name=damon
+project=<project_name>
+min_size=0              //设置采样区域范围
+max_size=4294967295
+min_acc=0               //设置聚合区间的范围
+max_acc=2
+min_age=0               //设置age计数器范围
+max_age=4294967295
+action=pageout
+```
+
 ## 参与贡献
 
 1.  Fork本仓库
