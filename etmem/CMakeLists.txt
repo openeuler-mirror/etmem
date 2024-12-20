@@ -42,7 +42,6 @@ set(ETMEMD_SRC
  ${ETMEMD_SRC_DIR}/etmemd_pool_adapter.c
  ${ETMEMD_SRC_DIR}/etmemd_migrate.c
  ${ETMEMD_SRC_DIR}/etmemd_psi_fb.c
- ${ETMEMD_SRC_DIR}/etmemd_damon.c
  ${ETMEMD_SRC_DIR}/etmemd_pmu_scan.c)
 
 set(ETMEM_SRC
@@ -52,6 +51,14 @@ set(ETMEM_SRC
  ${ETMEM_SRC_DIR}/etmem_engine.c
  ${ETMEM_SRC_DIR}/etmem_rpc.c
  ${ETMEM_SRC_DIR}/etmem_common.c)
+
+if(DAMON_SYSFS_VERSION STREQUAL "y")
+  set(ETMEMD_DAMON ${ETMEMD_SRC_DIR}/etmemd_damon_sysfs.c)
+else()
+  set(ETMEMD_DAMON ${ETMEMD_SRC_DIR}/etmemd_damon.c)
+endif()
+
+set(ETMEMD_SRC ${ETMEMD_SRC} ${ETMEMD_DAMON})
 
 add_executable(etmemd
  ${ETMEMD_SRC})
