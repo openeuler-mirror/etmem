@@ -398,7 +398,6 @@ void test_etmem_systemd_service_0001(void)
 int main(int argc, const char **argv)
 {
     CU_pSuite suite;
-    CU_pTest pTest;
     unsigned int num_failures;
     cu_run_mode cunit_mode = CUNIT_SCREEN;
     int error_num;
