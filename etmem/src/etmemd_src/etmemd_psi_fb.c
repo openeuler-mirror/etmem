@@ -1000,6 +1000,7 @@ static struct cg_obj *alloc_cg_obj_node(size_t cgroup_path_len, const char *glob
 
     if (cgroup_path_len == 0 || cgroup_path_len <= cpuacct_cg_len) {
         etmemd_log(ETMEMD_LOG_ERR, "get cgroup path wrong. path: %s", glob_path);
+        free(task_cg_obj);
         return NULL;
     }
 
