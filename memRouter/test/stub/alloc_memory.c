@@ -160,7 +160,7 @@ void dump_msg(struct vma_addr *msg, long len)
     for (int i = 0; i < len; i++) {
         long _addr = msg[i].start_addr;
         long _len = msg[i].vma_len;
-        printf("!!!--->[%d] vma: %lx len:%u<----!!!\n", i, _addr, _len);
+        printf("!!!--->[%d] vma: %lx len:%ld<----!!!\n", i, _addr, _len);
     }
     return;
 }
@@ -168,17 +168,17 @@ void dump_msg(struct vma_addr *msg, long len)
 int cmp_msg(struct vma_addr *msg1, long len1, struct vma_addr *msg2, long len2)
 {
     if (len1 != len2) {
-        printf("!!!---> len1:%d, len2:%d <----!!!", len1, len2);
+        printf("!!!---> len1:%ld, len2:%ld <----!!!", len1, len2);
         goto NOT_EQUAL;
     }
-    printf("!!!---> len1:%u, len2:%u <----!!!\n", len1, len2);
+    printf("!!!---> len1:%ld, len2:%ld <----!!!\n", len1, len2);
     for (int i = 0; i < len1; i++) {
         long _addr1 = msg1[i].start_addr;
         long _addr2 = msg2[i].start_addr;
         long _len1 = msg1[i].vma_len;
         long _len2 = msg2[i].vma_len;
         if ((_addr1 != _addr2) || (_len1 != _len2)) {
-            printf("!!!---> vma1: %lx len1:%u, vma2: %lx len2:%u <----!!!\n", _addr1, _len1, _addr2, _len2);
+            printf("!!!---> vma1: %lx len1:%ld, vma2: %lx len2:%ld <----!!!\n", _addr1, _len1, _addr2, _len2);
             goto NOT_EQUAL;
         }
     }
