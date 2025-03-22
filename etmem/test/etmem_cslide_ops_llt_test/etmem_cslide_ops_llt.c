@@ -395,9 +395,7 @@ static int page_refs_num(struct page_refs *page_refs)
 static void *get_hugepage(unsigned int num, int node, pid_t pid)
 {
     void *addr = NULL;
-    unsigned long nodemask;
     size_t len = num << HUGE_SHIFT;
-    int ret;
     void *pages[TEST_HUGEPAGE_NUM];
     int status[TEST_HUGEPAGE_NUM];
     int nodes[TEST_HUGEPAGE_NUM];
@@ -1051,7 +1049,6 @@ typedef enum {
 int main(int argc, const char **argv)
 {
     CU_pSuite suite;
-    CU_pTest pTest;
     unsigned int num_failures;
     cu_run_mode cunit_mode = CUNIT_SCREEN;
     int error_num;
