@@ -45,14 +45,10 @@ int main(int argc, char **argv)
     void *src_addr = NULL;
     void *dst_addr = NULL;
     unsigned long nodemask;
-    uint64_t start, end, total = 0;
     int time = 1;
-    int i;
-    char c;
     long ret;
     int dst_node;
     long long len;
-    size_t j;
     int is_busy;
 
     if (argc > 3) {
